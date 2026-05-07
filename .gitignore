@@ -1,0 +1,28 @@
+# Secrets — NEVER commit these
+.env
+.twitter_tokens
+cookies/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+downloads/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Subtitles temp
+sub_tmp/
