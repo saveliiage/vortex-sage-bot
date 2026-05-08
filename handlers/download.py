@@ -118,15 +118,9 @@ async def handle_download_video(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     status = await query.edit_message_text("⬇️ Скачиваю видео...")
 
-    async def _progress(text):
-        await _edit(status, text)
-
-    result = await _ytdlp_download_with_progress(
-        url,
-        "best[filesize<50M]/best",
-        _progress,
-        "⬇️ Скачиваю видео",
-    )
+    # Use the platform router here, not raw yt-dlp:
+    # Instagram needs embed/Apify fallback, TikTok needs Apify.
+    result = download_video(url)
 
     if not result["success"]:
         await _edit(status, humanize_error(result.get("error", "")))
@@ -159,25 +153,13 @@ async def handle_download_audio(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     status = await query.edit_message_text("⬇️ Скачиваю аудио...")
 
-    async def _progress(text):
-        await _edit(status, text)
-
-    output_template = os.path.join(DOWNLOAD_DIR, "%(title).100s_%(epoch)s.%(ext)s")
-    result = await run_ytdlp(
-        [YT_DLP, "--no-playlist", "--no-warnings"]
-        + _YT_COOKIES_ARG
-        + ["-f", "bestaudio/best", "--extract-audio", "--audio-format", "mp3",
-           "--audio-quality", "0", "-o", output_template,
-           "--print", "after_move:filepath", url],
-        progress_callback=_progress,
-        label="🎵 Скачиваю аудио",
-    )
+    result = download_audio(url)
 
     if not result["success"]:
         await _edit(status, humanize_error(result.get("error", "")))
         return
 
-    path = result["output"].splitlines()[-1].strip() if result["output"] else ""
+    path = result.get("path", "")
     if not path or not os.path.exists(path):
         await _edit(status, "❌ Аудио скачалось, но файл не найден.")
         return
@@ -387,11 +369,8 @@ async def handle_circle(update: Update, context: ContextTypes.DEFAULT_TYPE, url:
     info = get_info(url)
     duration = info.get("duration", 60) if info.get("success") else 60
 
-    async def _dl_progress(text):
-        await _edit(status, text)
-
-    # Download with progress
-    result = await _ytdlp_download_with_progress(url, "best[filesize<50M]/best", _dl_progress)
+    # Download through platform router so Instagram uses embed/Apify instead of raw yt-dlp.
+    result = download_video(url)
 
     if not result["success"]:
         await _edit(status, humanize_error(result.get("error", "")))

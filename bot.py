@@ -154,8 +154,11 @@ def main():
         filters.VIDEO | filters.ANIMATION | filters.Document.VIDEO,
         handle_video_to_circle,
     ))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(CallbackQueryHandler(handle_music_download, pattern=r"music_"))
+    app.add_handler(CallbackQueryHandler(handle_music_download, pattern=r"^music_"))
+    app.add_handler(CallbackQueryHandler(
+        handle_callback,
+        pattern=r"^(dl_video|dl_audio|summarize|circle|thumbnail|info|save_yes|save_no)$",
+    ))
 
     # Periodic cleanup of downloads/ — files older than 1h, every 30 min
     async def _cleanup_job(context: ContextTypes.DEFAULT_TYPE):
