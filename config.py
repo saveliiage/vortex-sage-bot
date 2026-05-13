@@ -30,5 +30,11 @@ TELEGRAM_FILE_SIZE = 50 * 1024 * 1024  # 50 MB (для Premium — 2GB, пока
 # YouTube cookies (Netscape format, from Sava's browser)
 YT_COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "/opt/vortex/cookies/youtube.txt")
 
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-os.makedirs(TRANSCRIPTS_DIR, exist_ok=True)
+try:
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+except (OSError, PermissionError):
+    pass
+try:
+    os.makedirs(TRANSCRIPTS_DIR, exist_ok=True)
+except (OSError, PermissionError):
+    pass

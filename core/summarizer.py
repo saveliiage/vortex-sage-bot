@@ -1,147 +1,129 @@
-"""LLM summarizer — via Google AI Studio (Gemini API)."""
+"""LLM summarizer — via Google AI Studio (Gemini API).
+Uses subtitles_json3.py for fast clean subtitle fetching.
+"""
 
 import json
-import re
 import httpx
 from config import GOOGLE_AI_API_KEY, SUMMARY_MODEL, SUMMARY_MAX_TOKENS
-
-SYSTEM_PROMPT = """Ты — AI-ассистент для анализа видео. Твоя задача:
-
-1. Получить расшифровку видео (транскрипт с таймкодами)
-2. Сделать краткое саммари (3-5 предложений) — о чём видео
-3. Выделить ключевые темы/идеи (списком)
-4. Разбить на логические разделы с таймкодами (если видео > 3 минут)
-
-Формат ответа (строго JSON, без markdown-обёртки):
-{
-  "title": "Название видео (если не указано — придумай сам)",
-  "summary": "Краткое саммари на русском, 3-5 предложений",
-  "key_points": ["тезис 1", "тезис 2", "тезис 3"],
-  "sections": [
-    {"time": "00:00", "title": "Вступление", "description": "о чём часть"}
-  ]
-}"""
+from core.subtitles_json3 import fetch_transcript
 
 
-def parse_vtt(vtt_text: str) -> str:
-    """Convert VTT subtitle content to plain text with timestamps."""
-    lines = []
-    timestamp_pattern = re.compile(r'(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})')
+SYSTEM_PROMPT = """Ты — эксперт по анализу видео-контента.
 
-    for line in vtt_text.splitlines():
-        line = line.strip()
-        if not line or line.startswith('WEBVTT') or line.startswith('Kind:') or line.startswith('language:'):
-            continue
-        if timestamp_pattern.match(line):
-            # Extract start time
-            m = timestamp_pattern.match(line)
-            ts = m.group(1)  # HH:MM:SS.mmm
-            # Convert to MM:SS
-            parts = ts.split(':')
-            mm = parts[1]
-            ss = parts[2].split('.')[0]
-            lines.append(f"[{mm}:{ss}]")
-        elif line[0].isdigit() and len(line) <= 4:
-            # Cue number (1, 2, 3...)
-            continue
-        else:
-            # Actual text
-            if lines and lines[-1].startswith('[') and lines[-1].endswith(']'):
-                lines[-1] += f" {line}"
-            else:
-                lines.append(line)
+Проанализируй транскрипт и сделай структурированное саммари на русском языке:
 
-    return "\n".join(lines)
+## Суть
+3-5 предложений о главном — живой язык, без воды.
+
+## Ключевые инсайты
+Bullet list конкретных takeaway, которые можно применить.
+
+## Структура видео
+Основные секции с таймкодами [MM:SS]. Не дословно — выдели логические блоки.
+
+## Цитаты
+2-3 запоминающиеся цитаты спикера в прямой речи.
+
+Правила:
+- Не пересказывай дословно, выделяй суть и инсайты
+- Таймкоды должны соответствовать реальным темам
+- Пиши как эксперт, а не как AI — живой, естественный язык
+"""
 
 
-def summarize_from_subtitles(subtitle_text: str, title: str = "", duration: int = 0) -> dict:
-    """Send subtitle text to Gemini and get structured summary."""
+def summarize_video(url: str, with_transcript: bool = False, lang: str = "ru-orig,ru,en") -> dict:
+    """Full pipeline: fetch subtitles → clean → LLM summary.
+    
+    Returns:
+      - success: bool
+      - title, duration, uploader, video_id, language
+      - summary: str (markdown)
+      - transcript: str (if with_transcript=True)
+      - error: str
+    """
+    # 1. Fetch subtitles
+    try:
+        sub = fetch_transcript(url, languages=lang)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    if not sub.get("success"):
+        return sub  # propagate error
+
+    transcript = sub["text"]
+    title = sub.get("title", "")
+
+    # 2. Send to LLM
     if not GOOGLE_AI_API_KEY:
         return {
             "success": False,
-            "error": "GOOGLE_AI_API_KEY не указан в .env. Добавь ключ и перезапусти бота."
+            "error": "GOOGLE_AI_API_KEY не указан в .env. Добавь ключ и перезапусти бота.",
+            "transcript": transcript if with_transcript else None,
         }
 
-    user_prompt = f"""Видео: {title or 'Без названия'}
-Длительность: {duration} сек
-
-Транскрипт (субтитры):
-{subtitle_text[:10000]}"""
+    prompt = SYSTEM_PROMPT + f"\n\nВидео: {title or 'Без названия'}\nДлительность: {sub['duration'] // 60} мин\n\nТранскрипт:\n{transcript[:25000]}"
 
     try:
         response = httpx.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{SUMMARY_MODEL}:generateContent?key={GOOGLE_AI_API_KEY}",
             headers={"Content-Type": "application/json"},
             json={
-                "contents": [
-                    {"role": "user", "parts": [{"text": SYSTEM_PROMPT + "\n\n" + user_prompt}]}
-                ],
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "generationConfig": {
                     "maxOutputTokens": SUMMARY_MAX_TOKENS,
                     "temperature": 0.3,
                 },
             },
-            timeout=60,
+            timeout=120,
         )
 
         if response.status_code != 200:
             return {
                 "success": False,
-                "error": f"Gemini API error {response.status_code}: {response.text[:200]}"
+                "error": f"Gemini API error {response.status_code}: {response.text[:200]}",
             }
 
         data = response.json()
-        content = data["candidates"][0]["content"]["parts"][0]["text"]
+        summary_text = data["candidates"][0]["content"]["parts"][0]["text"]
 
-        # Try to parse JSON from response
-        content = content.strip()
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1]
-            content = content.rsplit("```", 1)[0].strip()
-
-        result = json.loads(content)
-        result["success"] = True
+        result = {
+            "success": True,
+            "title": title,
+            "duration": sub["duration"],
+            "uploader": sub.get("uploader", ""),
+            "video_id": sub.get("video_id", ""),
+            "language": sub.get("language", ""),
+            "summary": summary_text.strip(),
+        }
+        if with_transcript:
+            result["transcript"] = transcript
         return result
 
-    except json.JSONDecodeError:
-        return {
-            "success": True,
-            "summary": content[:500],
-            "key_points": [],
-            "sections": [],
-            "_raw": content,
-        }
     except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-def summarize(transcript: str, title: str = "", duration: int = 0) -> dict:
-    """Legacy: send Whisper transcript to Gemini. Kept for fallback."""
-    return summarize_from_subtitles(transcript, title, duration)
+        return {"success": False, "error": str(e), "transcript": transcript if with_transcript else None}
 
 
 def format_summary_response(summary: dict) -> str:
-    """Format summary dict into readable Telegram message."""
+    """Format summary dict into Telegram-friendly markdown message."""
     if not summary.get("success"):
         return f"❌ {summary.get('error', 'Неизвестная ошибка')}"
 
     lines = []
-    lines.append(f"📝 **{summary.get('title', 'Саммарайз')}**\n")
+    title = summary.get('title', 'Саммарайз')
+    lines.append(f"📝 **{title}**\n")
 
-    if summary.get("summary"):
-        lines.append(f"_{summary['summary']}_\n")
-
-    if summary.get("key_points"):
-        lines.append("**Ключевые темы:**")
-        for pt in summary["key_points"]:
-            lines.append(f"• {pt}")
+    # Add summary body
+    body = summary.get("summary", "")
+    if body:
+        lines.append(body)
         lines.append("")
 
-    if summary.get("sections"):
-        lines.append("**Разделы:**")
-        for sec in summary["sections"]:
-            lines.append(f"`{sec.get('time', '??')}` — {sec.get('title', '')}")
-            if sec.get("description"):
-                lines.append(f"   _{sec['description']}_")
+    # Add metadata footer
+    dur = summary.get("duration", 0)
+    dur_str = f"{dur // 60} мин" if dur else ""
+    author = summary.get("uploader", "")
+    meta_parts = [p for p in [dur_str, f"@{author}"] if p]
+    if meta_parts:
+        lines.append("_" + " · ".join(meta_parts) + "_")
 
     return "\n".join(lines)

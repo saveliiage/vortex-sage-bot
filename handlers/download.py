@@ -238,126 +238,67 @@ async def handle_info(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
 
 
 async def handle_summarize(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str):
-    """Full pipeline: download subtitles → LLM summary → save to vault."""
+    """Full pipeline: download subtitles (JSON3) → LLM summary → save to vault."""
     query = update.callback_query
     chat_id = update.effective_chat.id
 
     status = await query.edit_message_text("📥 Получаю информацию о видео...")
 
-    # Step 1: get video info
-    info = get_info(url)
-    if not info["success"]:
-        await _edit(status, humanize_error(info.get("error", "")))
-        return
-
-    title = info.get("title", "Untitled")
-    platform = info.get("platform", "unknown")
-    duration = info.get("duration", 0)
-
-    await _edit(status, f"📝 Скачиваю субтитры: **{title}**", parse_mode=ParseMode.MARKDOWN)
-
-    # Step 2: download auto-subtitles via yt-dlp
-    sub_dir = os.path.join(DOWNLOAD_DIR, "sub_tmp")
-    os.makedirs(sub_dir, exist_ok=True)
-    sub_path = os.path.join(sub_dir, f"sub_{os.path.basename(url).split('=')[-1] or 'video'}")
-
-    async def _sub_progress(text):
-        await _edit(status, text)
-
-    result = await run_ytdlp(
-        [YT_DLP, "--no-playlist", "--no-warnings"]
-        + _YT_COOKIES_ARG
-        + ["--skip-download", "--write-auto-sub", "--sub-lang", "en,ru",
-           "--sub-format", "vtt",
-           "-o", sub_path, url],
-        progress_callback=_sub_progress,
-        label="📝 Скачиваю субтитры",
-    )
-
-    if not result["success"]:
-        await _edit(status, humanize_error(result.get("error", "")))
-        return
-
-    # Find downloaded .vtt file
-    import glob
-    vtt_files = glob.glob(f"{sub_path}*.vtt")
-    if not vtt_files:
-        await _edit(status,
-            f"❌ У видео **{title}** нет субтитров.\n\n"
-            "Попробуй другое видео — нужны те, где есть авто-субтитры (значок CC)."
-        )
-        return
-
-    # Pick first vtt (en preferred, ru fallback)
-    vtt_path = sorted(vtt_files)[0]
-
     try:
-        # Step 3: parse VTT
-        from core.summarizer import parse_vtt, summarize_from_subtitles, format_summary_response
+        # Step 1: fetch subtitles + info via new fast pipeline
+        await _edit(status, "📝 Скачиваю и чищу субтитры...")
 
-        with open(vtt_path, "r", encoding="utf-8") as f:
-            vtt_text = f.read()
+        from core.subtitles_json3 import fetch_transcript
+        from core.summarizer import summarize_video, format_summary_response
 
-        subtitle_text = parse_vtt(vtt_text)
-
-        if len(subtitle_text.strip()) < 50:
-            await _edit(status,
-                f"❌ Субтитры слишком короткие или пустые для **{title}**."
-            )
+        sub_data = fetch_transcript(url, languages="ru-orig,ru,en")
+        if not sub_data.get("success"):
+            await _edit(status, f"❌ {sub_data.get('error', 'Не удалось получить субтитры')}")
             return
 
-        # Step 4: summarize via LLM
+        title = sub_data.get("title", "Untitled")
+        duration = sub_data.get("duration", 0)
+        subtitle_text = sub_data["text"]
+
+        # Step 2: summarize via LLM
         await _edit(status, "🧠 Анализирую через AI...")
 
-        summary_result = summarize_from_subtitles(
-            subtitle_text=subtitle_text,
-            title=title,
-            duration=duration,
+        summary_result = summarize_video(
+            url=url,
+            with_transcript=False,
+            lang="ru-orig,ru,en",
         )
 
-        # Step 5: send result
+        # Step 3: send result
         response_text = format_summary_response(summary_result)
-        full_message = f"📝 **{title}**\n\n{response_text}"
+        if len(response_text) > 4000:
+            response_text = response_text[:4000] + "\n\n... (обрезано)"
 
-        if len(full_message) > 4000:
-            full_message = full_message[:4000] + "\n\n... (обрезано)"
+        await _edit(status, response_text, parse_mode=ParseMode.MARKDOWN)
 
-        await _edit(status, full_message, parse_mode=ParseMode.MARKDOWN)
-
-        # Step 6: save full transcript for vault
+        # Step 4: save full transcript for vault
         from core.vault import save_transcript
         vault_path = save_transcript(
             title=title,
             source_url=url,
-            platform=platform,
+            platform="youtube",
             duration=duration,
             full_text=subtitle_text,
             summary_data=summary_result,
         )
 
-        # Step 7: ask to save to Obsidian
+        # Step 5: ask to save to Obsidian
         from handlers.menu import save_to_vault_keyboard
-        await _send(context, chat_id,
-            f"💾 Сохранить транскрипт в Obsidian vault?\n`{vault_path}`",
-            parse_mode=ParseMode.MARKDOWN,
-        )
         await context.bot.send_message(
             chat_id=chat_id,
-            text="💾 Сохранить транскрипт в Obsidian vault?",
+            text=f"💾 Сохранить транскрипт в Obsidian vault?\n`{vault_path}`",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=save_to_vault_keyboard(title, vault_path, context),
         )
 
     except Exception as e:
         err_msg = str(e)[:200]
         await _edit(status, f"❌ Ошибка при саммарайзе: {err_msg}")
-    finally:
-        # Clean up temp files
-        import glob as g
-        for f in g.glob(f"{sub_path}*"):
-            try:
-                os.unlink(f)
-            except OSError:
-                pass
 
 
 async def handle_circle(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str):

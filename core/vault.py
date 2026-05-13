@@ -24,41 +24,43 @@ def save_transcript(
     full_text: str,
     summary_data: dict = None,
 ) -> str:
-    """Save transcript and summary to Obsidian vault. Returns path."""
+    """Save transcript and summary to Obsidian vault. Returns filesystem path."""
 
     safe_title = _sanitize_filename(title)
     date_str = datetime.now().strftime("%Y-%m-%d")
     filename = f"{date_str} — {safe_title}.md"
     filepath = os.path.join(TRANSCRIPTS_DIR, filename)
 
+    # Duration
+    dur_str = f"{duration // 60} мин" if duration else "?"
+
     # Build content
     lines = []
-    lines.append(f"# Транскрипт: {title}\n")
-    lines.append(f"**Источник:** {source_url}")
-    lines.append(f"**Дата:** {date_str}")
-    lines.append(f"**Длительность:** {duration} сек")
-    lines.append(f"**Платформа:** {platform}")
+    lines.append("---")
+    lines.append(f"title: \"{title}\"")
+    lines.append(f"source: {source_url}")
+    lines.append(f"date: {date_str}")
+    lines.append(f"duration: {dur_str}")
+    lines.append(f"platform: {platform}")
+    lines.append("type: transcript")
+    lines.append("---")
     lines.append("")
 
+    # Summary
+    lines.append(f"# {title}")
+    lines.append("")
     if summary_data and summary_data.get("success"):
-        if summary_data.get("summary"):
+        summary_text = summary_data.get("summary", "")
+        if summary_text:
             lines.append("## Саммари")
-            lines.append(summary_data["summary"])
+            lines.append(summary_text)
             lines.append("")
-        if summary_data.get("key_points"):
-            lines.append("## Ключевые темы")
-            for pt in summary_data["key_points"]:
-                lines.append(f"- {pt}")
-            lines.append("")
-        if summary_data.get("sections"):
-            lines.append("## Разделы")
-            for sec in summary_data["sections"]:
-                lines.append(f"- **{sec.get('time', '??')}** — {sec.get('title', '')}")
-                if sec.get("description"):
-                    lines.append(f"  — {sec['description']}")
-            lines.append("")
+    else:
+        lines.append("*(Саммари недоступно)*")
+        lines.append("")
 
-    lines.append("## Полный транскрипт")
+    # Full transcript
+    lines.append("## Транскрипт")
     lines.append("```")
     lines.append(full_text)
     lines.append("```")
