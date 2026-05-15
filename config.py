@@ -7,7 +7,13 @@ load_dotenv()
 
 BOT_TOKEN=os.getenv("BOT_TOKEN", "")
 ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
+OWNER_TELEGRAM_IDS = {
+    int(x)
+    for x in (os.getenv("OWNER_TELEGRAM_IDS", str(ALLOWED_USER_ID)) or "").replace(";", ",").split(",")
+    if x.strip().isdigit() and int(x.strip())
+}
 DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "/opt/vortex/downloads")
+VORTEX_DB_PATH = os.getenv("VORTEX_DB_PATH", "/opt/vortex/vortex.db")
 OPENROUTER_API_KEY=os.getenv("OPENROUTER_API_KEY", "")
 APIFY_TOKEN=os.getenv("APIFY_TOKEN", "")
 

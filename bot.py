@@ -19,6 +19,7 @@ from config import BOT_TOKEN, ALLOWED_USER_ID, DOWNLOAD_DIR
 from handlers.menu import handle_callback
 from handlers.download import handle_link, humanize_error
 from handlers.music import search_music, handle_music_download
+from handlers.admin import admin_plan
 from core.downloader import clean_downloads
 from core.circle import convert_to_circle
 
@@ -149,6 +150,7 @@ def main():
     # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("music", search_music))
+    app.add_handler(CommandHandler("admin_plan", admin_plan))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(
         filters.VIDEO | filters.ANIMATION | filters.Document.VIDEO,
