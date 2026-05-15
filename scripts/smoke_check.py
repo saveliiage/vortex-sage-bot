@@ -54,8 +54,14 @@ def assert_platform_router_used_for_instagram_downloads() -> None:
 
 def assert_subtitle_first_flow_exists() -> None:
     download = _read("handlers/download.py")
-    assert "--write-auto-sub" in download, "YouTube summary must use auto subtitles"
-    assert "parse_vtt" in download, "YouTube summary must parse VTT subtitles"
+    summarizer = _read("core/summarizer.py")
+    assert "from core.subtitles_json3 import fetch_transcript" in download, (
+        "YouTube summary handler must use the JSON3 subtitle pipeline"
+    )
+    assert "summarize_video(" in download, "summary handler must call core.summarizer.summarize_video"
+    assert "fetch_transcript(url, languages=lang)" in summarizer, (
+        "summarizer must fetch subtitles through core.subtitles_json3.fetch_transcript"
+    )
 
 
 def main() -> None:
