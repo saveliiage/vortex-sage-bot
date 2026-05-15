@@ -4,13 +4,15 @@
 
 ## Goal
 
-Make `vortex-sage-bot` a self-contained production deploy package:
+Make `vortex-sage-bot` a self-contained deployable project while keeping the current work local-first:
 
-- local development can happen on the laptop;
-- production runs on a VPS;
-- deploy/update/rollback are reproducible;
+- development and validation happen on Sava's laptop first;
+- do **not** deploy to or test on the VPS until Sava explicitly asks;
+- architecture must stay VPS-ready from the start;
+- future production target is a VPS;
+- deploy/update/rollback must be reproducible when VPS deployment starts;
 - a non-coder can hand the repo and this runbook to an operator such as Dedal;
-- `main` should be deployable only after tests/smoke checks pass.
+- `main` should be deployable only after local tests/smoke checks pass.
 
 ## Non-negotiable decisions
 

@@ -25,7 +25,7 @@ Telegram-бот для скачивания, анализа и конверта�
 
 ## Production deployment architecture
 
-Новый production-контракт: **PostgreSQL + Docker Compose + VPS runbook**. SQLite-код в `core/access.py` считается поведенческим прототипом и будет заменён на Postgres/migrations перед production-деплоем.
+Новый production-контракт: **локально проверяем на ноутбуке → архитектура сразу VPS-ready → на VPS деплоим только когда Сава явно скажет**. Целевой стек: PostgreSQL + Docker Compose + VPS runbook. SQLite-код в `core/access.py` считается поведенческим прототипом и будет заменён на Postgres/migrations перед production-деплоем.
 
 Документы для следующего этапа:
 

@@ -15,9 +15,11 @@ https://github.com/saveliiage/vortex-sage-bot
 
 Current important context:
 
-- The bot is developed locally on Sava's laptop through Hermes/Mikee.
-- Production will run on a VPS.
-- The VPS currently has old code; first deploy should park old code and clone a clean repo.
+- The bot is developed and validated locally on Sava's laptop through Hermes/Mikee.
+- Do not deploy to or test on the VPS until Sava explicitly asks.
+- Architecture must stay VPS-ready while the current implementation work remains local-first.
+- Future production will run on a VPS.
+- The VPS currently has old code; when Sava later approves first deploy, park old code and clone a clean repo.
 - Sava is not a programmer. Repo docs and commands must be beginner-proof and handoff-ready for Dedal/operator.
 - SQLite access code currently in `core/access.py` is a behavioral prototype, not production architecture.
 - Production decision: PostgreSQL + Docker Compose + migrations.
