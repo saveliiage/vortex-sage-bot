@@ -26,3 +26,12 @@ Thumbs.db
 
 # Subtitles temp
 sub_tmp/
+
+# Docker / DB backups
+backups/
+*.dump
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3

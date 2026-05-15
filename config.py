@@ -13,7 +13,13 @@ OWNER_TELEGRAM_IDS = {
     if x.strip().isdigit() and int(x.strip())
 }
 DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "/opt/vortex/downloads")
+
+# Database — Postgres in production, SQLite fallback for local dev
+VORTEX_DATABASE_URL = os.getenv("VORTEX_DATABASE_URL", "")
+# Legacy SQLite path — kept for backwards-compat of old tests that still import it.
+# Production code uses VORTEX_DATABASE_URL exclusively.
 VORTEX_DB_PATH = os.getenv("VORTEX_DB_PATH", "/opt/vortex/vortex.db")
+
 OPENROUTER_API_KEY=os.getenv("OPENROUTER_API_KEY", "")
 APIFY_TOKEN=os.getenv("APIFY_TOKEN", "")
 
@@ -27,7 +33,7 @@ WHISPER_MODEL = "base"  # base | small | medium
 # LLM — Google AI Studio (Gemini)
 GOOGLE_AI_API_KEY = os.getenv("GOOGLE_AI_API_KEY", "")
 SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "gemini-2.0-flash")
-SUMMARY_MAX_TOKENS = 1024
+SUMMARY_MAX_TOKENS = int(os.getenv("SUMMARY_MAX_TOKENS", "2000"))
 
 # Telegram limits
 TELEGRAM_FILE_SIZE = 50 * 1024 * 1024  # 50 MB (для Premium — 2GB, пока не трогаем)

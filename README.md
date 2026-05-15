@@ -27,12 +27,52 @@ Telegram-бот для скачивания, анализа и конверта�
 
 Новый production-контракт: **локально проверяем на ноутбуке → архитектура сразу VPS-ready → на VPS деплоим только когда Сава явно скажет**. Целевой стек: PostgreSQL + Docker Compose + VPS runbook. SQLite-код в `core/access.py` считается поведенческим прототипом и будет заменён на Postgres/migrations перед production-деплоем.
 
-Документы для следующего этапа:
+Документы:
 
 - [`docs/DEPLOYMENT_ARCHITECTURE.md`](docs/DEPLOYMENT_ARCHITECTURE.md) — целевая архитектура деплоя, БД, env, rollback и CI.
 - [`docs/AGENT_TASKS_DB_AND_DEPLOY.md`](docs/AGENT_TASKS_DB_AND_DEPLOY.md) — подробные брифы для DB/DevOps/Docs/CI агентов.
 
+Runbook для оператора (Дед/не-разработчик):
+
+- [`docs/DEPLOY.md`](docs/DEPLOY.md) — пошаговая инструкция деплоя (локально + VPS).
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — ежедневные операции: обновление, бэкап, логи, откат.
+- [`docs/ENV.md`](docs/ENV.md) — все переменные окружения, что обязательно, где взять.
+- [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — решение частых проблем.
+
 ## Быстрый старт
+
+### Docker Compose (рекомендуется)
+
+```bash
+# 1. Клонируй
+git clone https://github.com/saveliiage/vortex-sage-bot.git
+cd vortex-sage-bot
+
+# 2. Настрой .env
+cp .env.example .env
+nano .env
+# Заполни BOT_TOKEN, OWNER_TELEGRAM_IDS, GOOGLE_AI_API_KEY
+# Поменяй POSTGRES_PASSWORD
+
+# 3. Запусти (бот + PostgreSQL)
+docker compose up -d --build
+
+# 4. Проверь логи
+docker compose logs -f bot
+```
+
+Полезные команды:
+```bash
+docker compose logs -f bot           # логи
+docker compose restart bot           # перезапуск бота
+docker compose down                  # остановить всё
+docker compose run --rm bot ./scripts/smoke-check.sh   # дымовой тест
+docker compose run --rm bot ./scripts/migrate.sh       # миграции БД
+./scripts/backup-db.sh                                  # бэкап БД
+./scripts/restore-db.sh backups/<file>.dump             # восстановить БД
+```
+
+### Локально (venv, для разработки)
 
 ```bash
 # 1. Клонируй
@@ -46,7 +86,7 @@ pip install -r requirements.txt
 
 # 3. Настрой .env
 cp .env.example .env
-# Заполни BOT_TOKEN, ALLOWED_USER_ID, GOOGLE_AI_API_KEY
+# Заполни BOT_TOKEN, OWNER_TELEGRAM_IDS, GOOGLE_AI_API_KEY
 
 # 4. Запусти
 python bot.py

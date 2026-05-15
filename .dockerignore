@@ -1,0 +1,53 @@
+# Docker — files excluded from the build context
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+venv/
+.venv/
+
+# IDE / tools
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Tests / CI artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Media / downloads (these are volume-mounted at runtime)
+downloads/
+cache/
+cookies/
+backups/
+*.db
+*.sqlite
+
+# Docs (keep in repo, but not needed in image)
+# docs/ — intentionally NOT excluded, agents may read them at runtime
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml

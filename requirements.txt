@@ -8,3 +8,10 @@ websockets>=12.0
 requests>=2.31
 # Optional legacy fallback; not used in the primary subtitle-first summarize flow
 faster-whisper>=1.0
+# Testing
+pytest>=8.0
+
+# Database — SQLAlchemy + Postgres driver + migrations
+sqlalchemy>=2.0
+psycopg[binary]>=3.1
+alembic>=1.14

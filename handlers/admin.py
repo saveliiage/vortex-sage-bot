@@ -5,8 +5,38 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import OWNER_TELEGRAM_IDS, VORTEX_DB_PATH
-from core.access import AccessStore, VALID_PLANS
+from config import OWNER_TELEGRAM_IDS, VORTEX_DATABASE_URL
+from core.access_pg import AccessStore, VALID_PLANS
+from core.db import create_db_engine
+
+
+def _resolve_database_url() -> str:
+    """Return the database URL for the access store.
+
+    Prefers VORTEX_DATABASE_URL (Postgres in production). Falls back to
+    VORTEX_DB_PATH (SQLite) for legacy/local dev. If neither is set,
+    uses a local SQLite file for development.
+    """
+    from config import VORTEX_DB_PATH
+    if VORTEX_DATABASE_URL:
+        return VORTEX_DATABASE_URL
+    if VORTEX_DB_PATH:
+        return f"sqlite:///{VORTEX_DB_PATH}"
+    return "sqlite:///vortex.db"
+
+
+_engine = None
+
+
+def _get_engine():
+    global _engine
+    if _engine is None:
+        _engine = create_db_engine(_resolve_database_url())
+    return _engine
+
+
+def _store() -> AccessStore:
+    return AccessStore(engine=_get_engine(), owner_ids=OWNER_TELEGRAM_IDS)
 
 
 def parse_admin_plan_args(args: list[str]) -> dict[str, object]:
@@ -22,10 +52,6 @@ def parse_admin_plan_args(args: list[str]) -> dict[str, object]:
         raise ValueError(f"plan must be one of: {', '.join(sorted(VALID_PLANS))}")
     duration = args[2].strip().lower() if len(args) == 3 else None
     return {"telegram_id": telegram_id, "plan": plan, "duration": duration}
-
-
-def _store() -> AccessStore:
-    return AccessStore(VORTEX_DB_PATH, owner_ids=OWNER_TELEGRAM_IDS)
 
 
 async def admin_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

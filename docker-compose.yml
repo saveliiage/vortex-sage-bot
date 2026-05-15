@@ -1,0 +1,74 @@
+# Docker Compose — Vortex Bot + PostgreSQL
+# 
+# First deploy:
+#   cp .env.example .env
+#   nano .env
+#   docker compose up -d --build
+#
+# Update:
+#   git pull --ff-only origin main
+#   docker compose up -d --build
+#
+# Stop:  docker compose down
+# Logs:  docker compose logs -f bot
+
+version: "3.9"
+
+services:
+  bot:
+    build: .
+    container_name: vortex-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - VORTEX_DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-vortex}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-vortex}
+    volumes:
+      - downloads:/app/downloads
+      - cache:/app/cache
+      - cookies:/app/cookies
+      - ./backups:/app/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: python bot.py
+    # Healthcheck: verify Python can import config (lightweight, no network)
+    healthcheck:
+      test: ["CMD", "python", "-c", "import config; assert True"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: vortex-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vortex}
+      POSTGRES_USER: ${POSTGRES_USER:-vortex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vortex} -d ${POSTGRES_DB:-vortex}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # Postgres is internal only — no exposed ports by default
+    # If you need external access, uncomment:
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
+volumes:
+  pgdata:
+    name: vortex-pgdata
+  downloads:
+    name: vortex-downloads
+  cache:
+    name: vortex-cache
+  cookies:
+    name: vortex-cookies
