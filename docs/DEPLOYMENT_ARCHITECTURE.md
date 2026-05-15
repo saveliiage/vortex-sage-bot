@@ -314,3 +314,6 @@ This contract is complete when:
 - agent task prompts exist;
 - README links to the deployment architecture;
 - no production code changes are made in the same commit.
+- all reviewer blockers are resolved in the implementation contract: Obsidian `CONTRACT — Phase 0 Postgres Docker implementation.md`.
+
+See also: `docs/AGENT_TASKS_DB_AND_DEPLOY.md` (agent task prompts).

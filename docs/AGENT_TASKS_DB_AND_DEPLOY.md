@@ -1,6 +1,8 @@
 # Agent Tasks — DB and VPS Deployment
 
 > Use this file when delegating implementation work. Every agent must receive the relevant task text inline, not just a vague pointer to the file.
+>
+> **Implementation contract:** All decisions (quotas, admin_plan syntax, URL TTL, group behavior) are frozen in the Obsidian contract: `CONTRACT — Phase 0 Postgres Docker implementation.md`. Read it before coding — it resolves every reviewer blocker from the 2026-05-14 audit.
 
 ## Shared project context for all agents
 
