@@ -23,6 +23,15 @@ Telegram-бот для скачивания, анализа и конверта�
 | Twitter/X | ✅ | ✅ | yt-dlp |
 | Vimeo, Dailymotion, др. | ✅ | ✅ | yt-dlp |
 
+## Production deployment architecture
+
+Новый production-контракт: **PostgreSQL + Docker Compose + VPS runbook**. SQLite-код в `core/access.py` считается поведенческим прототипом и будет заменён на Postgres/migrations перед production-деплоем.
+
+Документы для следующего этапа:
+
+- [`docs/DEPLOYMENT_ARCHITECTURE.md`](docs/DEPLOYMENT_ARCHITECTURE.md) — целевая архитектура деплоя, БД, env, rollback и CI.
+- [`docs/AGENT_TASKS_DB_AND_DEPLOY.md`](docs/AGENT_TASKS_DB_AND_DEPLOY.md) — подробные брифы для DB/DevOps/Docs/CI агентов.
+
 ## Быстрый старт
 
 ```bash
