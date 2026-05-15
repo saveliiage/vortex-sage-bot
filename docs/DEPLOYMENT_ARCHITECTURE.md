@@ -144,13 +144,16 @@ OWNER_TELEGRAM_IDS=123456789,987654321
 The first production migration should create at least:
 
 - `users`
-- `plans`
 - `quota_limits`
 - `usage_events`
 - `usage_counters`
 - `jobs`
 - `result_refs`
 - `admin_audit`
+
+Plans (`owner`, `free`, `pro`, `creator`, `blocked`) are enumerated values — stored in `users.plan` and `quota_limits.plan` columns. There is no separate `plans` lookup table.
+
+Terminology: DB column `cost_class` holds the action name (e.g., `llm_summary`, `media_download`, `apify`). In prose, "action" and "cost_class" refer to the same concept — "action" is the user-facing term, `cost_class` is the DB identifier.
 
 ### Users
 
@@ -203,13 +206,17 @@ Handlers must stop relying only on `context.user_data` for source URLs/action st
 Target callback pattern:
 
 ```text
-callback_data = "summary:<job_id>"
-callback_data = "dl_video:<job_id>"
-callback_data = "dl_audio:<job_id>"
-callback_data = "circle:<job_id>"
+callback_data = "vx:summary:<job_id>"
+callback_data = "vx:dl_video:<job_id>"
+callback_data = "vx:dl_audio:<job_id>"
+callback_data = "vx:circle:<job_id>"
+callback_data = "vx:thumbnail:<job_id>"
+callback_data = "vx:info:<job_id>"
 ```
 
 `jobs` stores the source URL/ref with TTL so callbacks survive bot restarts.
+
+`thumbnail` and `info` callbacks are non-persistent convenience actions — they read from `context.user_data['url']` and do NOT need a row in `jobs`. They use the `vx:` prefix for consistency but their `job_id` is ignored; they are fallback-safe (if `context.user_data` is gone, the menu is re-shown).
 
 ## Deploy contract
 

@@ -125,12 +125,13 @@ Minimum tables:
 
 ```text
 users
-plans
 quota_limits
 usage_events
 usage_counters
 admin_audit
 ```
+
+Plans are enumerated values (`owner`, `free`, `pro`, `creator`, `blocked`) — stored in `users.plan` and `quota_limits.plan` columns. No separate `plans` lookup table.
 
 If implementing persistent jobs in the same task, also:
 
