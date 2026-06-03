@@ -32,7 +32,7 @@ WHISPER_MODEL = "base"  # base | small | medium
 
 # LLM — Google AI Studio (Gemini)
 GOOGLE_AI_API_KEY = os.getenv("GOOGLE_AI_API_KEY", "")
-SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "gemini-2.0-flash")
+SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "gemini-2.5-flash-lite")
 SUMMARY_MAX_TOKENS = int(os.getenv("SUMMARY_MAX_TOKENS", "2000"))
 
 # Telegram limits

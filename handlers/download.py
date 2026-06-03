@@ -12,13 +12,7 @@ from core.progress import run_ytdlp, run_ffmpeg_with_progress
 from config import TELEGRAM_FILE_SIZE, DOWNLOAD_DIR
 
 YT_DLP = "/opt/vortex/venv/bin/yt-dlp"
-YT_COOKIES_TXT = "/opt/vortex/cookies/youtube.txt"
-_YT_COOKIES_ARG = [
-    "--cookies", YT_COOKIES_TXT,
-    "--remote-components", "ejs:github",
-] if os.path.exists(YT_COOKIES_TXT) else [
-    "--remote-components", "ejs:github",
-]
+_YT_COOKIES_ARG = ["--cookies-from-browser", "chromium", "--remote-components", "ejs:github"]
 
 
 # ── Error helpers ────────────────────────────────────────────────────────────

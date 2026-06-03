@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+YT_DLP = "/opt/vortex/venv/bin/yt-dlp"
+
 
 def _run(cmd: list, cwd=None, timeout=120) -> str:
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout)
@@ -25,7 +27,7 @@ def _extract_video_id(url: str) -> str:
 
 def _fetch_info(url: str) -> dict:
     try:
-        out = _run(["yt-dlp", "--dump-json", "--skip-download", url], timeout=60)
+        out = _run([YT_DLP, "--dump-json", "--skip-download", url], timeout=60)
         data = json.loads(out.splitlines()[0])
         return {
             "title": data.get("title", "Unknown"),
@@ -43,7 +45,8 @@ def download_json3(url: str, languages: str = "ru-orig,ru,en", workdir: Path = N
         workdir = Path(tempfile.mkdtemp(prefix="vortex_subs_"))
 
     base_cmd = [
-        "yt-dlp",
+        YT_DLP,
+        "--cookies-from-browser", "chromium",
         "--skip-download",
         "--write-auto-subs",
         f"--sub-langs={languages}",

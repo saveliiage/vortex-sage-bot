@@ -1,11 +1,11 @@
-"""LLM summarizer — via Google AI Studio (Gemini API).
-Uses subtitles_json3.py for fast clean subtitle fetching.
-"""
+"""LLM summarizer — via LiteLLM proxy (multi-key Gemini, free tiers)."""
 
-import json
 import httpx
-from config import GOOGLE_AI_API_KEY, SUMMARY_MODEL, SUMMARY_MAX_TOKENS
-from core.subtitles_json3 import fetch_transcript
+from config import SUMMARY_MAX_TOKENS
+
+LITELLM_BASE = "http://127.0.0.1:5500/v1"
+LITELLM_MODEL = "gemini-flash-lite"  # gemini/gemini-2.5-flash-lite (6 keys)
+LITELLM_API_KEY = "fake-key"  # LiteLLM ignores client key
 
 
 SYSTEM_PROMPT = """Ты — эксперт по анализу видео-контента.
@@ -32,8 +32,8 @@ Bullet list конкретных takeaway, которые можно приме�
 
 
 def summarize_video(url: str, with_transcript: bool = False, lang: str = "ru-orig,ru,en") -> dict:
-    """Full pipeline: fetch subtitles → clean → LLM summary.
-    
+    """Full pipeline: fetch subtitles → clean → LLM summary via LiteLLM.
+
     Returns:
       - success: bool
       - title, duration, uploader, video_id, language
@@ -43,6 +43,7 @@ def summarize_video(url: str, with_transcript: bool = False, lang: str = "ru-ori
     """
     # 1. Fetch subtitles
     try:
+        from core.subtitles_json3 import fetch_transcript
         sub = fetch_transcript(url, languages=lang)
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -53,26 +54,21 @@ def summarize_video(url: str, with_transcript: bool = False, lang: str = "ru-ori
     transcript = sub["text"]
     title = sub.get("title", "")
 
-    # 2. Send to LLM
-    if not GOOGLE_AI_API_KEY:
-        return {
-            "success": False,
-            "error": "GOOGLE_AI_API_KEY не указан в .env. Добавь ключ и перезапусти бота.",
-            "transcript": transcript if with_transcript else None,
-        }
-
+    # 2. Send to LLM via LiteLLM proxy
     prompt = SYSTEM_PROMPT + f"\n\nВидео: {title or 'Без названия'}\nДлительность: {sub['duration'] // 60} мин\n\nТранскрипт:\n{transcript[:25000]}"
 
     try:
         response = httpx.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{SUMMARY_MODEL}:generateContent?key={GOOGLE_AI_API_KEY}",
-            headers={"Content-Type": "application/json"},
+            f"{LITELLM_BASE}/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {LITELLM_API_KEY}",
+            },
             json={
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "maxOutputTokens": SUMMARY_MAX_TOKENS,
-                    "temperature": 0.3,
-                },
+                "model": LITELLM_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": SUMMARY_MAX_TOKENS,
+                "temperature": 0.3,
             },
             timeout=120,
         )
@@ -80,11 +76,11 @@ def summarize_video(url: str, with_transcript: bool = False, lang: str = "ru-ori
         if response.status_code != 200:
             return {
                 "success": False,
-                "error": f"Gemini API error {response.status_code}: {response.text[:200]}",
+                "error": f"LiteLLM error {response.status_code}: {response.text[:200]}",
             }
 
         data = response.json()
-        summary_text = data["candidates"][0]["content"]["parts"][0]["text"]
+        summary_text = data["choices"][0]["message"]["content"]
 
         result = {
             "success": True,

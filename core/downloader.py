@@ -15,12 +15,7 @@ YT_DLP = "/opt/vortex/venv/bin/yt-dlp"
 FFMPEG = "ffmpeg"
 
 # YouTube cookies flag — only for yt-dlp calls, not for Instagram/TikTok
-_YT_COOKIES_ARG = [
-    "--cookies", YT_COOKIES_FILE,
-    "--remote-components", "ejs:github",
-] if os.path.exists(YT_COOKIES_FILE) else [
-    "--remote-components", "ejs:github",
-]
+_YT_COOKIES_ARG = ["--cookies-from-browser", "chromium", "--remote-components", "ejs:github"]
 
 
 def _platform(url: str) -> str:

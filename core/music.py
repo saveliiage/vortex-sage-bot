@@ -11,7 +11,7 @@ from config import DOWNLOAD_DIR, YT_COOKIES_FILE
 YT_DLP = "/opt/vortex/venv/bin/yt-dlp"
 
 # YouTube cookies arg
-_YT_COOKIES_ARG = ["--cookies", YT_COOKIES_FILE] if os.path.exists(YT_COOKIES_FILE) else []
+_YT_COOKIES_ARG = ["--cookies-from-browser", "chromium"]
 
 
 def search_youtube_music(query: str, limit: int = 5) -> list:
