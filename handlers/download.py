@@ -232,29 +232,16 @@ async def handle_info(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
 
 
 async def handle_summarize(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str):
-    """Full pipeline: download subtitles (JSON3) → LLM summary → save to vault."""
+    """Full pipeline: download subtitles (JSON3) → LLM summary."""
     query = update.callback_query
-    chat_id = update.effective_chat.id
 
     status = await query.edit_message_text("📥 Получаю информацию о видео...")
 
     try:
-        # Step 1: fetch subtitles + info via new fast pipeline
         await _edit(status, "📝 Скачиваю и чищу субтитры...")
 
-        from core.subtitles_json3 import fetch_transcript
         from core.summarizer import summarize_video, format_summary_response
 
-        sub_data = fetch_transcript(url, languages="ru-orig,ru,en")
-        if not sub_data.get("success"):
-            await _edit(status, f"❌ {sub_data.get('error', 'Не удалось получить субтитры')}")
-            return
-
-        title = sub_data.get("title", "Untitled")
-        duration = sub_data.get("duration", 0)
-        subtitle_text = sub_data["text"]
-
-        # Step 2: summarize via LLM
         await _edit(status, "🧠 Анализирую через AI...")
 
         summary_result = summarize_video(
@@ -263,32 +250,11 @@ async def handle_summarize(update: Update, context: ContextTypes.DEFAULT_TYPE, u
             lang="ru-orig,ru,en",
         )
 
-        # Step 3: send result
         response_text = format_summary_response(summary_result)
         if len(response_text) > 4000:
             response_text = response_text[:4000] + "\n\n... (обрезано)"
 
         await _edit(status, response_text, parse_mode=ParseMode.MARKDOWN)
-
-        # Step 4: save full transcript for vault
-        from core.vault import save_transcript
-        vault_path = save_transcript(
-            title=title,
-            source_url=url,
-            platform="youtube",
-            duration=duration,
-            full_text=subtitle_text,
-            summary_data=summary_result,
-        )
-
-        # Step 5: ask to save to Obsidian
-        from handlers.menu import save_to_vault_keyboard
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"💾 Сохранить транскрипт в Obsidian vault?\n`{vault_path}`",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=save_to_vault_keyboard(title, vault_path, context),
-        )
 
     except Exception as e:
         err_msg = str(e)[:200]

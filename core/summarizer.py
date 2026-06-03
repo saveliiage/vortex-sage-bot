@@ -10,25 +10,34 @@ LITELLM_API_KEY = "fake-key"  # LiteLLM ignores client key
 
 SYSTEM_PROMPT = """Ты — эксперт по анализу видео-контента.
 
-Проанализируй транскрипт и сделай структурированное саммари на русском языке:
+Проанализируй транскрипт и сделай структурированное саммари на русском языке.
+Используй ТОЛЬКО Telegram Markdown: **жирный** для заголовков, *курсив* для акцентов.
+НЕ используй ## (не работает в Telegram).
 
-## Суть
+Формат ответа:
+
+**Суть**
 3-5 предложений о главном — живой язык, без воды.
 
-## Ключевые инсайты
-Bullet list конкретных takeaway, которые можно применить.
+**Ключевые инсайты**
+• Конкретный takeaway 1
+• Конкретный takeaway 2
+• Конкретный takeaway 3
 
-## Структура видео
-Основные секции с таймкодами [MM:SS]. Не дословно — выдели логические блоки.
+**Структура**
+MM:SS — первая тема
+MM:SS — вторая тема
+MM:SS — третья тема
 
-## Цитаты
-2-3 запоминающиеся цитаты спикера в прямой речи.
+**Цитаты**
+2-3 запоминающиеся цитаты спикера в прямой речи, в кавычках.
 
 Правила:
 - Не пересказывай дословно, выделяй суть и инсайты
 - Таймкоды должны соответствовать реальным темам
-- Пиши как эксперт, а не как AI — живой, естественный язык
-"""
+- Пиши как эксперт, живой, естественный язык
+- В Telegram Markdown нет ## — используй **жирный**
+""".strip()
 
 
 def summarize_video(url: str, with_transcript: bool = False, lang: str = "ru-orig,ru,en") -> dict:
@@ -106,20 +115,21 @@ def format_summary_response(summary: dict) -> str:
 
     lines = []
     title = summary.get('title', 'Саммарайз')
-    lines.append(f"📝 **{title}**\n")
+    lines.append(f"📝 *{title}*")
+    lines.append("")
 
-    # Add summary body
+    # Add summary body (LLM already produces Telegram-compatible markdown)
     body = summary.get("summary", "")
     if body:
         lines.append(body)
         lines.append("")
 
-    # Add metadata footer
+    # Add metadata — plain text, no underscores near @username
     dur = summary.get("duration", 0)
     dur_str = f"{dur // 60} мин" if dur else ""
     author = summary.get("uploader", "")
-    meta_parts = [p for p in [dur_str, f"@{author}"] if p]
+    meta_parts = [p for p in [dur_str, f"@{author}" if author else ""] if p]
     if meta_parts:
-        lines.append("_" + " · ".join(meta_parts) + "_")
+        lines.append(" · ".join(meta_parts))
 
     return "\n".join(lines)

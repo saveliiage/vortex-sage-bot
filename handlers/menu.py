@@ -1,6 +1,6 @@
 """Inline menus for Vortex bot — using context.user_data to avoid long callback_data."""
 
-import os
+import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext
 from telegram import Update
@@ -38,21 +38,6 @@ def media_action_keyboard(url: str, context: CallbackContext = None) -> InlineKe
     return InlineKeyboardMarkup(buttons)
 
 
-def save_to_vault_keyboard(video_title: str, transcript_path: str, context: CallbackContext = None) -> InlineKeyboardMarkup:
-    """Ask if user wants to save transcript to Obsidian vault."""
-    if context:
-        context.user_data["vault_title"] = video_title
-        context.user_data["vault_path"] = transcript_path
-
-    buttons = [
-        [
-            InlineKeyboardButton("✅ Да, сохранить", callback_data="save_yes"),
-            InlineKeyboardButton("❌ Нет", callback_data="save_no"),
-        ],
-    ]
-    return InlineKeyboardMarkup(buttons)
-
-
 def get_url(context: CallbackContext) -> str:
     """Get stored URL from context."""
     return context.user_data.get("vortex_url", "")
@@ -68,35 +53,7 @@ async def handle_callback(update: Update, context: CallbackContext):
 
     action = query.data
 
-    if action == "save_yes":
-        transcript_path = context.user_data.get("vault_path", "")
-        video_title = context.user_data.get("vault_title", "Untitled")
-
-        if not transcript_path or not os.path.exists(transcript_path):
-            await query.edit_message_text("❌ Файл транскрипта не найден.")
-            return
-
-        from core.vault import git_push
-        await query.edit_message_text(f"💾 Сохраняю «{video_title}» в Obsidian...")
-
-        result = git_push(transcript_path)
-        if result.get("success"):
-            await query.edit_message_text(
-                f"✅ Транскрипт сохранён в Obsidian vault!\n"
-                f"📂 `{transcript_path}`",
-                parse_mode="MARKDOWN",
-            )
-        else:
-            await query.edit_message_text(
-                f"⚠️ Файл сохранён локально, но git push не удался:\n"
-                f"`{result.get('error', result.get('output', '?'))[:200]}`",
-                parse_mode="MARKDOWN",
-            )
-
-    elif action == "save_no":
-        await query.edit_message_text("Ок, не сохраняю.")
-
-    elif action in ACTIONS:
+    if action in ACTIONS:
         url = get_url(context)
         if not url:
             await query.edit_message_text("❌ Ссылка не найдена. Отправь ссылку заново.")

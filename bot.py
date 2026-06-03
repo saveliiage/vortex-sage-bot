@@ -159,7 +159,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_music_download, pattern=r"^music_"))
     app.add_handler(CallbackQueryHandler(
         handle_callback,
-        pattern=r"^(dl_video|dl_audio|summarize|circle|thumbnail|info|save_yes|save_no)$",
+        pattern=r"^(dl_video|dl_audio|summarize|circle|thumbnail|info)$",
     ))
 
     # Periodic cleanup of downloads/ — files older than 1h, every 30 min
