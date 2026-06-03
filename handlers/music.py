@@ -3,12 +3,12 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from config import ALLOWED_USER_ID
+from config import OWNER_TELEGRAM_IDS
 from core.music import search_youtube_music, download_music, format_track_info
 
 
 def is_allowed(user_id: int) -> bool:
-    return user_id == ALLOWED_USER_ID
+    return user_id in OWNER_TELEGRAM_IDS
 
 
 async def search_music(update: Update, context: ContextTypes.DEFAULT_TYPE):

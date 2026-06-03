@@ -15,7 +15,7 @@ from telegram.ext import (
 import os
 import tempfile
 
-from config import BOT_TOKEN, ALLOWED_USER_ID, DOWNLOAD_DIR
+from config import BOT_TOKEN, OWNER_TELEGRAM_IDS, DOWNLOAD_DIR
 from handlers.menu import handle_callback
 from handlers.download import handle_link, humanize_error
 from handlers.music import search_music, handle_music_download
@@ -37,8 +37,8 @@ URL_PATTERN = re.compile(
 
 
 def is_allowed(user_id: int) -> bool:
-    """Check if user is allowed to use this bot."""
-    return user_id == ALLOWED_USER_ID
+    """Check if user is an owner (from OWNER_TELEGRAM_IDS)."""
+    return user_id in OWNER_TELEGRAM_IDS
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -141,8 +141,8 @@ def main():
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN not set in .env")
         return
-    if not ALLOWED_USER_ID:
-        logger.error("ALLOWED_USER_ID not set in .env")
+    if not OWNER_TELEGRAM_IDS:
+        logger.error("OWNER_TELEGRAM_IDS not set in .env")
         return
 
     app = Application.builder().token(BOT_TOKEN).build()
@@ -170,7 +170,7 @@ def main():
             logger.warning(f"cleanup failed: {e}")
     app.job_queue.run_repeating(_cleanup_job, interval=1800, first=60)
 
-    logger.info(f"Vortex bot started. Allowed user: {ALLOWED_USER_ID}")
+    logger.info(f"Vortex bot started. Owners: {OWNER_TELEGRAM_IDS}")
     print("🌀 Vortex bot is running...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
