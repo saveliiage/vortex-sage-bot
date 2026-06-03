@@ -99,9 +99,10 @@ def download_video(url: str) -> dict:
         return apify_tiktok.download_video(url)
 
     output_template = os.path.join(DOWNLOAD_DIR, "%(title).100s_%(epoch)s.%(ext)s")
+    # "best" fallback handles platforms where filesize metadata is missing (Pinterest HLS, etc.)
     return _run_ytdlp(
         [
-            "-f", "best[filesize<50M]/best",
+            "-f", "best[filesize<50M]/bestvideo+bestaudio/best",
             "-o", output_template,
             "--print", "after_move:filepath",
             url,
@@ -147,19 +148,35 @@ def download_thumbnail(url: str) -> dict:
     if plat == "tiktok":
         return apify_tiktok.download_thumbnail(url)
 
-    output_template = os.path.join(DOWNLOAD_DIR, "thumb_%(epoch)s.%(ext)s")
+    # Use fixed output name to locate the thumbnail file reliably.
+    # --write-thumbnail writes <name>.jpg, --print filename gives us the media filename
+    # but the thumbnail uses the same stem. We'll print the media filename, derive thumb path from it.
+    output_template = os.path.join(DOWNLOAD_DIR, "thumb_%(epoch)s")
     res = _run_ytdlp(
         [
             "--skip-download",
             "--write-thumbnail",
             "--convert-thumbnails", "jpg",
             "-o", output_template,
-            "--print", "after_move:thumbnails_filepath",
+            "--print", "filename",
             url,
         ],
-        want_path=True,
     )
-    return res
+    if not res["success"]:
+        return res
+    # The printed filename is <thumb_EPOCH>.<ext> (the video extension), thumbnail is <thumb_EPOCH>.jpg
+    media_name = res["output"].strip()
+    stem = os.path.splitext(media_name)[0]
+    thumb_path = stem + ".jpg"
+    if os.path.exists(thumb_path):
+        return {"success": True, "path": thumb_path}
+    # Fallback: search DOWNLOAD_DIR for matching thumb
+    import glob
+    candidates = glob.glob(os.path.join(DOWNLOAD_DIR, f"thumb_*.jpg"))
+    if candidates:
+        newest = max(candidates, key=os.path.getmtime)
+        return {"success": True, "path": newest}
+    return {"success": False, "error": "thumbnail file not found"}
 
 
 def clean_downloads(hours: int = 1):
