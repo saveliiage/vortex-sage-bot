@@ -19,6 +19,7 @@ from config import BOT_TOKEN, OWNER_TELEGRAM_IDS, DOWNLOAD_DIR
 from handlers.menu import handle_callback
 from handlers.download import handle_link, humanize_error
 from handlers.music import search_music, handle_music_download
+from handlers.voice import handle_audio_to_voice
 from handlers.admin import admin_plan
 from core.downloader import clean_downloads
 from core.circle import convert_to_circle
@@ -155,6 +156,10 @@ def main():
     app.add_handler(MessageHandler(
         filters.VIDEO | filters.ANIMATION | filters.Document.VIDEO,
         handle_video_to_circle,
+    ))
+    app.add_handler(MessageHandler(
+        filters.AUDIO | filters.VOICE | filters.Document.AUDIO,
+        handle_audio_to_voice,
     ))
     app.add_handler(CallbackQueryHandler(handle_music_download, pattern=r"^music_"))
     app.add_handler(CallbackQueryHandler(

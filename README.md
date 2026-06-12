@@ -9,6 +9,7 @@ Telegram-бот для скачивания, анализа и конверта�
 - 📝 **Саммарайз YouTube** — скачивает авто-субтитры → Gemini делает саммарайз с разделами и таймкодами
 - 🎵 **Поиск музыки** — `/music <запрос>` — поиск через YouTube Music
 - 🔵 **Кружочки** — конвертация любого видео в Telegram video note (640x640)
+- 🎙️ **Голосовые** — конвертация любого аудиофайла в Telegram voice note (OGG/Opus)
 - 🖼 **Превью** — скачивание обложки видео
 - ℹ️ **Инфо о видео** — метаданные: длительность, размер, платформа
 - 💾 **Сохранение в Obsidian** — транскрипты с саммарайзом в vault
@@ -94,9 +95,9 @@ python bot.py
 
 ## YouTube cookies
 
-Для скачивания с YouTube нужны свежие cookies. Бот ожидает Netscape-файл по пути `cookies/youtube.txt`.
+Для скачивания с YouTube бот использует `--cookies-from-browser chromium` — читает cookies напрямую из профиля запущенного Chromium. Никаких файлов cookies.txt, никакого `refresh_cookies.py`. Пока Chromium жив и залогинен в YouTube — работает бессрочно.
 
-Для обновления cookies используется `refresh_cookies.py` — извлекает cookies из Chromium через Chrome DevTools Protocol (требует запущенный Chrome с `--remote-debugging-port=9222`).
+Требование: `vortex-chromium.service` должен быть запущен и залогинен в YouTube (один раз через noVNC при старте).
 
 ## Структура проекта
 
@@ -107,9 +108,10 @@ python bot.py
 ├── core/
 │   ├── downloader.py   # Роутинг по платформам
 │   ├── progress.py     # Async прогресс-бары для yt-dlp / ffmpeg
-│   ├── summarizer.py   # Gemini API — саммарайз субтитров
+│   ├── summarizer.py   # LiteLLM → Gemini — саммарайз субтитров
 │   ├── music.py        # Поиск и скачивание музыки
-│   ├── circle.py       # Конвертация в video note
+│   ├── circle.py       # Конвертация в video note (кружок)
+│   ├── voice.py        # Конвертация аудио в voice note (голосовое)
 │   ├── instagram.py    # Instagram: embed + Apify fallback
 │   ├── apify_tiktok.py # TikTok через Apify
 │   ├── transcriber.py  # faster-whisper (локальный STT)
@@ -117,7 +119,8 @@ python bot.py
 └── handlers/
     ├── download.py     # Обработчики скачивания с прогрессом
     ├── menu.py         # Inline-меню и callback routing
-    └── music.py        # Обработчик /music
+    ├── music.py        # Обработчик /music
+    └── voice.py        # Обработчик аудио → голосовое
 ```
 
 ## Systemd сервис
