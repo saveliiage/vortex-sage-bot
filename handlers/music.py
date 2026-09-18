@@ -3,12 +3,12 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from config import OWNER_TELEGRAM_IDS
+from config import OWNER_TELEGRAM_IDS, ALLOWED_USER_IDS
 from core.music import search_youtube_music, download_music, format_track_info
 
 
 def is_allowed(user_id: int) -> bool:
-    return user_id in OWNER_TELEGRAM_IDS
+    return user_id in OWNER_TELEGRAM_IDS or user_id in ALLOWED_USER_IDS
 
 
 async def search_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -21,14 +21,24 @@ async def search_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text(
             "🎵 **Поиск музыки**\n\n"
-            "Использование: `/music <запрос>`\n"
-            "Пример: `/music Imagine Dragons Bones`",
+            "Просто отправь мне название трека или артиста — найду на YouTube Music.\n"
+            "Пример: `Imagine Dragons Bones`",
             parse_mode="MARKDOWN",
         )
         return
 
     query = " ".join(context.args)
-    status_msg = await update.message.reply_text(f"🔍 Ищу: *{query}*", parse_mode="MARKDOWN")
+    await run_music_search(update, context, query)
+
+
+async def run_music_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
+    """Search YouTube Music and show track picker. Shared by /music and plain-text router."""
+    from core.music import search_youtube_music
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    # effective_message works for /music (message) and text-menu callback (update.message is None)
+    reply_target = update.effective_message
+    status_msg = await reply_target.reply_text(f"🔍 Ищу: *{query}*", parse_mode="MARKDOWN")
 
     tracks = search_youtube_music(query, limit=5)
     
