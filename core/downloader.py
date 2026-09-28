@@ -1,21 +1,23 @@
-"""Media downloader — routes per-platform: Instagram (embed), TikTok (Apify), rest (yt-dlp)."""
+"""Media downloader — routes per-platform: Instagram (embed), TikTok (yt-dlp → Apify), rest (yt-dlp)."""
 
 import os
 import re
 import json
+import logging
 import subprocess
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
-from config import DOWNLOAD_DIR, YT_COOKIES_FILE
-from core import instagram, apify_tiktok
+from config import DOWNLOAD_DIR, YT_DLP_BIN, YT_COOKIES_ARGS
+from core import instagram, tiktok, apify_tiktok
 
-YT_DLP = "/opt/vortex/venv/bin/yt-dlp"
+log = logging.getLogger(__name__)
+
 FFMPEG = "ffmpeg"
 
-# YouTube cookies flag — only for yt-dlp calls, not for Instagram/TikTok
-_YT_COOKIES_ARG = ["--cookies-from-browser", "chromium", "--remote-components", "ejs:github"]
+# YouTube cookies args — from config (file-based if available, no browser needed)
+_YT_COOKIES_ARG = YT_COOKIES_ARGS
 
 
 def _platform(url: str) -> str:
@@ -30,7 +32,7 @@ def _platform(url: str) -> str:
 
 def _run_ytdlp(args: list, want_path: bool = False) -> dict:
     """Run yt-dlp. If want_path — args must include `--print after_move:filepath`."""
-    full = [YT_DLP, "--no-playlist", "--no-warnings"] + _YT_COOKIES_ARG + args
+    full = [YT_DLP_BIN, "--no-playlist", "--no-warnings"] + _YT_COOKIES_ARG + args
     proc = subprocess.run(full, capture_output=True, text=True, timeout=600)
     if proc.returncode != 0:
         err = proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "yt-dlp failed"
@@ -56,6 +58,33 @@ def _ffmpeg_to_mp3(src: str) -> dict:
     return {"success": True, "path": dst}
 
 
+# ---------- TikTok: yt-dlp primary, Apify fallback ----------
+
+def _apify_enabled() -> bool:
+    """Owner kill switch — flip TIKTOK_APIFY_FALLBACK=0 in .env to skip Apify entirely."""
+    return os.getenv("TIKTOK_APIFY_FALLBACK", "1").strip().lower() not in ("0", "false", "no")
+
+
+def _tiktok_or_fallback(action: str, url: str) -> dict:
+    """Run the yt-dlp action for TikTok; on failure retry through Apify (video only).
+
+    Apify's free TikTok actor only serves video files, so audio/thumbnail just report
+    the yt-dlp error instead of burning a paid actor run for nothing.
+    """
+    res = getattr(tiktok, action)(url)
+    if res.get("success"):
+        return res
+    if not _apify_enabled():
+        return res
+    if action != "download_video":
+        return res
+    log.warning("TikTok yt-dlp path failed (%s), falling back to Apify", res.get("error"))
+    fallback = apify_tiktok.download_video(url)
+    if not fallback.get("success"):
+        return {"success": False, "error": f"{res.get('error')} | Apify: {fallback.get('error')}"}
+    return fallback
+
+
 # ---------- Public API (called by handlers) ----------
 
 def get_info(url: str) -> dict:
@@ -67,7 +96,7 @@ def get_info(url: str) -> dict:
             return meta
         return {**meta, "ext": "mp4", "filesize": 0}
     if plat == "tiktok":
-        meta = apify_tiktok.fetch_metadata(url)
+        meta = _tiktok_or_fallback("fetch_metadata", url)
         if not meta["success"]:
             return meta
         return {**meta, "ext": "mp4", "filesize": 0}
@@ -96,15 +125,121 @@ def download_video(url: str) -> dict:
     if plat == "instagram":
         return instagram.download_video(url)
     if plat == "tiktok":
-        return apify_tiktok.download_video(url)
+        return _tiktok_or_fallback("download_video", url)
 
     output_template = os.path.join(DOWNLOAD_DIR, "%(title).100s_%(epoch)s.%(ext)s")
-    # "best" fallback handles platforms where filesize metadata is missing (Pinterest HLS, etc.)
+    # Prefer avc1/H.264 — Telegram can't play AV1. Fallback chain covers sites without avc1.
     return _run_ytdlp(
         [
-            "-f", "best[filesize<50M]/bestvideo+bestaudio/best",
+            "-f", "bestvideo[vcodec^=avc1]+bestaudio/bestvideo+bestaudio/best",
             "-o", output_template,
             "--print", "after_move:filepath",
+            "--merge-output-format", "mp4",
+            url,
+        ],
+        want_path=True,
+    )
+
+
+def get_formats(url: str) -> list:
+    """Get available video formats from yt-dlp. Returns list of dicts with height, ext, filesize, format_id."""
+    plat = _platform(url)
+    if plat in ("instagram", "tiktok"):
+        return []  # No format selection for these platforms
+
+    res = _run_ytdlp(["--list-formats", "--print", "%(formats)s", url])
+    if not res["success"]:
+        return []
+
+    # Use --dump-json to get format info
+    res = _run_ytdlp(["--dump-json", url])
+    if not res["success"]:
+        return []
+
+    try:
+        info = json.loads(res["output"].splitlines()[0])
+    except (json.JSONDecodeError, IndexError):
+        return []
+
+    # Best audio size (for total size estimate)
+    audio_size = 0
+    for f in info.get("formats", []):
+        ac = f.get("acodec", "")
+        vc = f.get("vcodec", "")
+        if ac and ac != "none" and (not vc or vc == "none"):
+            s = f.get("filesize") or f.get("filesize_approx") or 0
+            if s > audio_size:
+                audio_size = s
+
+    # Per height pick the most Telegram-friendly codec:
+    # avc1 (H.264 — plays everywhere incl. Telegram) > vp9 > av01 (Telegram can't play AV1)
+    by_height = {}
+    for f in info.get("formats", []):
+        height = f.get("height")
+        if not height or height < 144:
+            continue
+        vcodec = f.get("vcodec", "")
+        if not vcodec or vcodec == "none":
+            continue
+        if vcodec.startswith("avc1"):
+            pri = 0
+        elif vcodec.startswith("vp9") or vcodec.startswith("vp09"):
+            pri = 1
+        else:
+            pri = 2
+        fps = f.get("fps") or 0
+        filesize = f.get("filesize") or f.get("filesize_approx") or 0
+        format_id = f.get("format_id", "")
+        cur = by_height.get(height)
+        if cur is None or pri < cur["pri"] or (pri == cur["pri"] and filesize > cur["filesize"]):
+            by_height[height] = {"pri": pri, "fps": fps, "filesize": filesize, "format_id": format_id}
+
+    formats = []
+    for height, f in sorted(by_height.items(), key=lambda x: x[0], reverse=True):
+        label = f"{height}p"
+        if f["fps"] and f["fps"] > 30:
+            label += f" {int(f['fps'])}fps"
+        total_size = (f["filesize"] + audio_size) if (f["filesize"] and audio_size) else (f["filesize"] or audio_size)
+        formats.append({
+            "height": height,
+            "label": label,
+            "ext": "mp4",
+            "filesize": total_size,
+            "format_id": f["format_id"],
+            "has_audio": True,  # audio is merged in separately — final file always has sound
+        })
+    return formats
+
+
+def download_video_quality(url: str, format_id: str = None, max_height: int = None) -> dict:
+    """Download video with specific quality. If format_id given, use it. If max_height, pick best up to that height."""
+    plat = _platform(url)
+    if plat == "instagram":
+        return instagram.download_video(url)
+    if plat == "tiktok":
+        return _tiktok_or_fallback("download_video", url)
+
+    output_template = os.path.join(DOWNLOAD_DIR, "%(title).100s_%(epoch)s.%(ext)s")
+
+    if format_id:
+        format_spec = format_id
+    elif max_height:
+        # Prefer avc1 (H.264): Telegram's player can't handle AV1/VP9-only uploads reliably.
+        # bestvideo[height<=X][vcodec^=avc1] + bestaudio, fallback to any codec, fallback to single progressive file.
+        format_spec = (
+            f"bestvideo[height<={max_height}][vcodec^=avc1]+bestaudio/"
+            f"bestvideo[height<={max_height}]+bestaudio/"
+            f"best[height<={max_height}]/best"
+        )
+    else:
+        format_spec = "bestvideo[vcodec^=avc1]+bestaudio/bestvideo+bestaudio/best"
+
+    return _run_ytdlp(
+        [
+            "-f", format_spec,
+            "-o", output_template,
+            "--print", "after_move:filepath",
+            "--merge-output-format", "mp4",
             url,
         ],
         want_path=True,
@@ -112,11 +247,27 @@ def download_video(url: str) -> dict:
 
 
 def download_audio(url: str) -> dict:
-    """Return mp3. For Instagram/TikTok — download mp4 then convert."""
+    """Return mp3. TikTok — yt-dlp extracts audio directly, Apify fallback is video-only."""
     plat = _platform(url)
-    if plat in ("instagram", "tiktok"):
-        mod = instagram if plat == "instagram" else apify_tiktok
-        vid = mod.download_video(url)
+    if plat == "tiktok":
+        res = _tiktok_or_fallback("download_audio", url)
+        if res.get("success"):
+            return res
+        # Apify serves mp4 only — pull the video and transcode it locally.
+        if not _apify_enabled():
+            return res
+        log.warning("TikTok audio via yt-dlp failed (%s), falling back to Apify + ffmpeg", res.get("error"))
+        vid = apify_tiktok.download_video(url)
+        if not vid["success"]:
+            return {"success": False, "error": f"{res.get('error')} | Apify: {vid.get('error')}"}
+        mp3 = _ffmpeg_to_mp3(vid["path"])
+        try:
+            os.unlink(vid["path"])
+        except OSError:
+            pass
+        return mp3
+    if plat == "instagram":
+        vid = instagram.download_video(url)
         if not vid["success"]:
             return vid
         mp3 = _ffmpeg_to_mp3(vid["path"])
@@ -146,7 +297,16 @@ def download_thumbnail(url: str) -> dict:
     if plat == "instagram":
         return instagram.download_thumbnail(url)
     if plat == "tiktok":
-        return apify_tiktok.download_thumbnail(url)
+        res = _tiktok_or_fallback("download_thumbnail", url)
+        if res.get("success"):
+            return res
+        if not _apify_enabled():
+            return res
+        log.warning("TikTok thumbnail via yt-dlp failed (%s), falling back to Apify", res.get("error"))
+        fallback = apify_tiktok.download_thumbnail(url)
+        if not fallback.get("success"):
+            return {"success": False, "error": f"{res.get('error')} | Apify: {fallback.get('error')}"}
+        return fallback
 
     # Use fixed output name to locate the thumbnail file reliably.
     # --write-thumbnail writes <name>.jpg, --print filename gives us the media filename

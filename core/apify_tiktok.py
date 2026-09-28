@@ -12,14 +12,18 @@ RUN_URL = f"https://api.apify.com/v2/acts/{ACTOR}/run-sync-get-dataset-items"
 
 
 def fetch_metadata(url: str) -> dict:
-    """Run Apify TikTok actor, return first result with downloadable mp4."""
+    """Run Apify TikTok actor, return first result with downloadable mp4.
+
+    shouldDownloadVideos must stay True: without it TikTok's current response carries
+    mediaUrls=[] and no videoUrl at all, so every download failed before it started.
+    """
     if not APIFY_TOKEN:
         return {"success": False, "error": "APIFY_TOKEN не задан в .env"}
 
     payload = {
         "postURLs": [url],
         "resultsPerPage": 1,
-        "shouldDownloadVideos": False,
+        "shouldDownloadVideos": True,
         "shouldDownloadCovers": False,
     }
     try:
@@ -41,7 +45,11 @@ def fetch_metadata(url: str) -> dict:
 
     item = data[0]
     media = item.get("mediaUrls") or []
-    video_url = media[0] if media else item.get("videoUrl") or item.get("video", {}).get("downloadAddr")
+    video_url = (
+        media[0]
+        if media
+        else item.get("videoUrl") or (item.get("videoMeta") or {}).get("downloadAddr")
+    )
     if not video_url:
         return {"success": False, "error": "В ответе Apify нет ссылки на mp4"}
 

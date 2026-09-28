@@ -6,13 +6,12 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from core.downloader import download_video, download_audio, get_info, download_thumbnail
+from core.downloader import download_video, download_audio, get_info, download_thumbnail, get_formats, download_video_quality
 from core.circle import convert_to_circle
 from core.progress import run_ytdlp, run_ffmpeg_with_progress
-from config import TELEGRAM_FILE_SIZE, DOWNLOAD_DIR
+from config import TELEGRAM_FILE_SIZE, DOWNLOAD_DIR, YT_DLP_BIN, YT_COOKIES_ARGS
 
-YT_DLP = "/opt/vortex/venv/bin/yt-dlp"
-_YT_COOKIES_ARG = ["--cookies-from-browser", "chromium", "--remote-components", "ejs:github"]
+_YT_COOKIES_ARG = YT_COOKIES_ARGS
 
 
 # ── Error helpers ────────────────────────────────────────────────────────────
@@ -32,6 +31,7 @@ _ERROR_TEMPLATES = {
     "APIFY_TOKEN": "❌ Apify-токен не настроен. Напиши Дэдалу.",
     "is not a valid URL": "❌ Это не похоже на ссылку. Проверь формат.",
     "Apify пустой результат": "❌ TikTok/Instagram не вернул данные. Возможно пост приватный.",
+    "В ответе Apify нет ссылки на mp4": "❌ Сервис не отдал ссылку на видео. Попробуй позже или другим способом.",
     "Apify запрос упал": "❌ Сервис скачивания временно недоступен. Попробуй позже.",
     "Не удалось скачать видео": "❌ Не удалось скачать видео с этой платформы.",
     "Не удалось скачать аудио": "❌ Не удалось извлечь аудио.",
@@ -55,10 +55,10 @@ def humanize_error(raw: str) -> str:
 # ── Status updater helper ────────────────────────────────────────────────────
 
 
-async def _edit(msg, text: str, parse_mode=None):
+async def _edit(msg, text: str, parse_mode=None, reply_markup=None):
     """Safely edit a message (catch errors if msg was deleted)."""
     try:
-        await msg.edit_text(text, parse_mode=parse_mode)
+        await msg.edit_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     except Exception:
         pass
 
@@ -69,6 +69,26 @@ async def _send(context, chat_id, text: str, parse_mode=None):
         return await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
     except Exception:
         return None
+
+
+def _clean_title_from_filepath(filepath: str) -> str:
+    """Derive clean media title from yt-dlp output filename.
+
+    Our template is '%(title).100s_%(epoch)s.%(ext)s' — strip the _epoch suffix and extension:
+    'Big Buck Bunny - Short Film_1788851940.mp4' → 'Big Buck Bunny - Short Film'
+    """
+    import re
+    name = os.path.splitext(os.path.basename(filepath))[0]
+    name = re.sub(r"_\d{9,}$", "", name)
+    return name
+
+
+def _media_caption(url: str, filepath: str) -> str | None:
+    """Caption policy: clean title for yt-dlp platforms (YouTube etc.), no caption for Instagram/TikTok."""
+    from core.downloader import _platform
+    if _platform(url) in ("instagram", "tiktok"):
+        return None
+    return _clean_title_from_filepath(filepath)
 
 
 # ── Handlers ─────────────────────────────────────────────────────────────────
@@ -93,7 +113,7 @@ async def _ytdlp_download_with_progress(
     """Download using async yt-dlp with progress. Returns {success, path}."""
     output_template = os.path.join(DOWNLOAD_DIR, "%(title).100s_%(epoch)s.%(ext)s")
     result = await run_ytdlp(
-        [YT_DLP, "--no-playlist", "--no-warnings"]
+        [YT_DLP_BIN, "--no-playlist", "--no-warnings"]
         + _YT_COOKIES_ARG
         + ["-f", format_spec, "-o", output_template, "--print", "after_move:filepath", url],
         progress_callback=progress_callback,
@@ -108,38 +128,75 @@ async def _ytdlp_download_with_progress(
 
 
 async def handle_download_video(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str):
-    """Download video and send as file, with progress bar."""
+    """Download video — check available qualities first, let user pick."""
     query = update.callback_query
-    status = await query.edit_message_text("⬇️ Скачиваю видео...")
+    status = await query.edit_message_text("🔍 Проверяю доступные качества...")
 
-    # Use the platform router here, not raw yt-dlp:
-    # Instagram needs embed/Apify fallback, TikTok needs Apify.
-    result = download_video(url)
-
-    if not result["success"]:
-        await _edit(status, humanize_error(result.get("error", "")))
-        return
-
-    filepath = result["path"]
-    filesize = os.path.getsize(filepath)
-
-    if filesize > TELEGRAM_FILE_SIZE:
-        await _edit(status,
-            f"⚠️ Видео слишком большое ({filesize // 1024 // 1024} MB). "
-            f"Лимит Telegram — 50 MB. Попробуй скачать аудио."
-        )
+    # Instagram/TikTok — no format selection, download directly
+    from core.downloader import _platform
+    plat = _platform(url)
+    if plat in ("instagram", "tiktok"):
+        await _edit(status, "⬇️ Скачиваю видео...")
+        result = download_video(url)
+        if not result["success"]:
+            await _edit(status, humanize_error(result.get("error", "")))
+            return
+        filepath = result["path"]
+        filesize = os.path.getsize(filepath)
+        if filesize > TELEGRAM_FILE_SIZE:
+            await _edit(status, f"⚠️ Видео слишком большое ({filesize // 1024 // 1024} MB).")
+            os.unlink(filepath)
+            return
+        await _edit(status, "📤 Отправляю видео...")
+        with open(filepath, "rb") as f:
+            await update.effective_chat.send_video(
+                video=f,
+                caption=_media_caption(url, filepath),
+                supports_streaming=True,
+            )
         os.unlink(filepath)
         return
 
-    await _edit(status, "📤 Отправляю видео...")
-    with open(filepath, "rb") as f:
-        await update.effective_chat.send_video(
-            video=f,
-            caption=f"✅ Готово | {os.path.basename(filepath)}",
-            supports_streaming=True,
-        )
+    # yt-dlp platforms — get available formats
+    formats = get_formats(url)
+    if not formats or len(formats) <= 1:
+        # No choice — download best
+        await _edit(status, "⬇️ Скачиваю видео (лучшее качество)...")
+        result = download_video(url)
+        if not result["success"]:
+            await _edit(status, humanize_error(result.get("error", "")))
+            return
+        filepath = result["path"]
+        filesize = os.path.getsize(filepath)
+        if filesize > TELEGRAM_FILE_SIZE:
+            await _edit(status, f"⚠️ Видео слишком большое ({filesize // 1024 // 1024} MB).")
+            os.unlink(filepath)
+            return
+        await _edit(status, "📤 Отправляю видео...")
+        with open(filepath, "rb") as f:
+            await update.effective_chat.send_video(
+                video=f,
+                caption=f"✅ Готово | {os.path.basename(filepath)}",
+                supports_streaming=True,
+            )
+        os.unlink(filepath)
+        return
 
-    os.unlink(filepath)
+    # Show quality picker
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    # Store formats in user_data
+    context.user_data["vortex_formats"] = formats
+
+    buttons = []
+    for i, f in enumerate(formats[:8]):  # max 8 quality options
+        size_str = f" ({f['filesize'] // 1024 // 1024} MB)" if f.get("filesize") else ""
+        label = f"🎬 {f['label']}{size_str}"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"q_{i}")])
+
+    buttons.append([InlineKeyboardButton("⚡ Авто (лучшее)", callback_data="q_auto")])
+
+    await _edit(status, "🎬 Выбери качество видео:", reply_markup=InlineKeyboardMarkup(buttons))
 
 
 async def handle_download_audio(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str):
@@ -172,7 +229,7 @@ async def handle_download_audio(update: Update, context: ContextTypes.DEFAULT_TY
     with open(filepath, "rb") as f:
         await update.effective_chat.send_audio(
             audio=f,
-            caption=f"✅ Готово | {os.path.basename(filepath)}",
+            caption=_media_caption(url, filepath),
         )
 
     os.unlink(filepath)
@@ -336,3 +393,58 @@ async def handle_circle(update: Update, context: ContextTypes.DEFAULT_TYPE, url:
     finally:
         if os.path.exists(video_path):
             os.unlink(video_path)
+
+
+async def handle_quality_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quality selection callback (q_<index> or q_auto)."""
+    query = update.callback_query
+    await query.answer()
+
+    if not query.data:
+        return
+
+    url = context.user_data.get("vortex_url", "")
+    if not url:
+        await query.edit_message_text("❌ Ссылка не найдена. Отправь ссылку заново.")
+        return
+
+    choice = query.data  # q_0, q_1, ..., q_auto
+    status = await query.edit_message_text("⬇️ Скачиваю видео...")
+
+    # Determine format
+    if choice == "q_auto":
+        result = download_video(url)
+    else:
+        idx = int(choice.replace("q_", ""))
+        formats = context.user_data.get("vortex_formats", [])
+        if idx >= len(formats):
+            await _edit(status, "❌ Качество не найдено. Попробуй снова.")
+            return
+        fmt = formats[idx]
+        max_h = fmt["height"]
+        await _edit(status, f"⬇️ Скачиваю {fmt['label']}...")
+        result = download_video_quality(url, max_height=max_h)
+
+    if not result["success"]:
+        await _edit(status, humanize_error(result.get("error", "")))
+        return
+
+    filepath = result["path"]
+    filesize = os.path.getsize(filepath)
+
+    if filesize > TELEGRAM_FILE_SIZE:
+        await _edit(status, f"⚠️ Видео слишком большое ({filesize // 1024 // 1024} MB).")
+        os.unlink(filepath)
+        return
+
+    await _edit(status, "📤 Отправляю видео...")
+    with open(filepath, "rb") as f:
+        await update.effective_chat.send_video(
+            video=f,
+            caption=_media_caption(url, filepath),
+            supports_streaming=True,
+        )
+
+    os.unlink(filepath)
+    # Clean up user_data
+    context.user_data.pop("vortex_formats", None)

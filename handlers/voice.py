@@ -6,12 +6,12 @@ import tempfile
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import OWNER_TELEGRAM_IDS, DOWNLOAD_DIR
+from config import OWNER_TELEGRAM_IDS, ALLOWED_USER_IDS, DOWNLOAD_DIR
 from core.voice import convert_to_voice
 
 
 def is_allowed(user_id: int) -> bool:
-    return user_id in OWNER_TELEGRAM_IDS
+    return user_id in OWNER_TELEGRAM_IDS or user_id in ALLOWED_USER_IDS
 
 
 async def handle_audio_to_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -41,8 +41,8 @@ async def handle_audio_to_voice(update: Update, context: ContextTypes.DEFAULT_TY
 
         voice_path = res["path"]
         size = os.path.getsize(voice_path)
-        if size > 50 * 1024 * 1024:
-            await status.edit_text(f"⚠️ Голосовое слишком большое ({size // 1024 // 1024} MB), Telegram режет на 50 MB.")
+        if size > 2 * 1024 * 1024 * 1024:
+            await status.edit_text(f"⚠️ Голосовое слишком большое ({size // 1024 // 1024} MB).")
             os.unlink(voice_path)
             return
 

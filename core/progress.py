@@ -61,7 +61,15 @@ async def run_ytdlp(
     `progress_callback(pct: float, text: str)` is called every ~5% change.
     Returns same shape as sync `_run_ytdlp`.
     """
-    cmd = args if args[0] == "/opt/vortex/venv/bin/yt-dlp" else ["/opt/vortex/venv/bin/yt-dlp"] + args
+    import shutil as _sh
+    _ytdlp = _sh.which("yt-dlp") or "/opt/vortex/venv/bin/yt-dlp"
+    # If args already starts with the correct path, use as-is; otherwise prepend
+    if args and args[0] == _ytdlp:
+        cmd = args
+    elif args and args[0] == "/opt/vortex/venv/bin/yt-dlp":
+        cmd = [_ytdlp] + args[1:]
+    else:
+        cmd = [_ytdlp] + args
     last_pct = -1
 
     proc = await asyncio.create_subprocess_exec(

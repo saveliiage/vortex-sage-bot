@@ -1,4 +1,4 @@
-# Docker Compose — Vortex Bot + PostgreSQL
+# Docker Compose — Vortex Bot + PostgreSQL + Local Bot API
 # 
 # First deploy:
 #   cp .env.example .env
@@ -12,8 +12,6 @@
 # Stop:  docker compose down
 # Logs:  docker compose logs -f bot
 
-version: "3.9"
-
 services:
   bot:
     build: .
@@ -23,22 +21,48 @@ services:
       - .env
     environment:
       - VORTEX_DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-vortex}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-vortex}
+      - DOWNLOAD_DIR=/app/downloads
+      - VAULT_PATH=/app/vault
+      - TELEGRAM_BOT_API_URL=http://telegram-bot-api:8081
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID:-}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH:-}
     volumes:
       - downloads:/app/downloads
       - cache:/app/cache
       - cookies:/app/cookies
       - ./backups:/app/backups
+      - vault:/app/vault
     depends_on:
       postgres:
         condition: service_healthy
+      telegram-bot-api:
+        condition: service_started
     command: python bot.py
-    # Healthcheck: verify Python can import config (lightweight, no network)
     healthcheck:
       test: ["CMD", "python", "-c", "import config; assert True"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    container_name: telegram-bot-api
+    restart: unless-stopped
+    entrypoint: ""
+    command: >-
+      telegram-bot-api
+      --api-id=${TELEGRAM_API_ID}
+      --api-hash=${TELEGRAM_API_HASH}
+      --local
+      --dir=/var/lib/telegram-bot-api
+      --temp-dir=/var/lib/telegram-bot-api/tmp
+      --http-port=8081
+    user: "${BOT_API_UID:-1001}:${BOT_API_GID:-1001}"
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - botapi_data:/var/lib/telegram-bot-api
 
   postgres:
     image: postgres:16-alpine
@@ -58,10 +82,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    # Postgres is internal only — no exposed ports by default
-    # If you need external access, uncomment:
-    # ports:
-    #   - "127.0.0.1:5432:5432"
 
 volumes:
   pgdata:
@@ -72,3 +92,7 @@ volumes:
     name: vortex-cache
   cookies:
     name: vortex-cookies
+  vault:
+    name: vortex-vault
+  botapi_data:
+    name: vortex-botapi-data

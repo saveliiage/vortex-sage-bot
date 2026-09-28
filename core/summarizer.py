@@ -1,11 +1,11 @@
-"""LLM summarizer — via LiteLLM proxy (multi-key Gemini, free tiers)."""
+"""LLM summarizer — via Google AI Studio (Gemini) direct API."""
 
 import httpx
-from config import SUMMARY_MAX_TOKENS
+from config import SUMMARY_MAX_TOKENS, GOOGLE_AI_API_KEY, SUMMARY_MODEL
 
-LITELLM_BASE = "http://127.0.0.1:5500/v1"
-LITELLM_MODEL = "gemini-flash-lite"  # gemini/gemini-2.5-flash-lite (6 keys)
-LITELLM_API_KEY = "fake-key"  # LiteLLM ignores client key
+# Google AI Studio endpoints
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
+GEMINI_MODEL = SUMMARY_MODEL  # e.g. gemini-2.0-flash
 
 
 SYSTEM_PROMPT = """Ты — эксперт по анализу видео-контента.
@@ -63,21 +63,23 @@ def summarize_video(url: str, with_transcript: bool = False, lang: str = "ru-ori
     transcript = sub["text"]
     title = sub.get("title", "")
 
-    # 2. Send to LLM via LiteLLM proxy
+    # 2. Send to Google AI Studio (Gemini) directly
     prompt = SYSTEM_PROMPT + f"\n\nВидео: {title or 'Без названия'}\nДлительность: {sub['duration'] // 60} мин\n\nТранскрипт:\n{transcript[:25000]}"
 
+    if not GOOGLE_AI_API_KEY:
+        return {"success": False, "error": "GOOGLE_AI_API_KEY not set — cannot summarize"}
+
     try:
+        url = f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent?key={GOOGLE_AI_API_KEY}"
         response = httpx.post(
-            f"{LITELLM_BASE}/chat/completions",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {LITELLM_API_KEY}",
-            },
+            url,
+            headers={"Content-Type": "application/json"},
             json={
-                "model": LITELLM_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": SUMMARY_MAX_TOKENS,
-                "temperature": 0.3,
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "maxOutputTokens": SUMMARY_MAX_TOKENS,
+                    "temperature": 0.3,
+                },
             },
             timeout=120,
         )
@@ -85,11 +87,11 @@ def summarize_video(url: str, with_transcript: bool = False, lang: str = "ru-ori
         if response.status_code != 200:
             return {
                 "success": False,
-                "error": f"LiteLLM error {response.status_code}: {response.text[:200]}",
+                "error": f"Gemini API error {response.status_code}: {response.text[:200]}",
             }
 
         data = response.json()
-        summary_text = data["choices"][0]["message"]["content"]
+        summary_text = data["candidates"][0]["content"]["parts"][0]["text"]
 
         result = {
             "success": True,

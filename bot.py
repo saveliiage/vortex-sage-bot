@@ -15,9 +15,10 @@ from telegram.ext import (
 import os
 import tempfile
 
-from config import BOT_TOKEN, OWNER_TELEGRAM_IDS, DOWNLOAD_DIR
+from config import BOT_TOKEN, OWNER_TELEGRAM_IDS, DOWNLOAD_DIR, ALLOWED_USER_IDS
+from config import TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_API_URL
 from handlers.menu import handle_callback
-from handlers.download import handle_link, humanize_error
+from handlers.download import handle_link, humanize_error, handle_quality_choice
 from handlers.music import search_music, handle_music_download
 from handlers.voice import handle_audio_to_voice
 from handlers.admin import admin_plan
@@ -38,8 +39,8 @@ URL_PATTERN = re.compile(
 
 
 def is_allowed(user_id: int) -> bool:
-    """Check if user is an owner (from OWNER_TELEGRAM_IDS)."""
-    return user_id in OWNER_TELEGRAM_IDS
+    """Check if user is an owner or allowed user (from OWNER_TELEGRAM_IDS / ALLOWED_USER_IDS)."""
+    return user_id in OWNER_TELEGRAM_IDS or user_id in ALLOWED_USER_IDS
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -53,7 +54,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🌀 **Vortex** — твой медиа-хаб.\n\n"
         "📎 **Скачивание:** отправь ссылку на видео с YouTube, TikTok, Instagram,\n"
         "Pinterest, Twitter/X, Vimeo или любого другого сайта.\n\n"
-        "🎵 **Музыка:** `/music <запрос>` — поиск и скачивание треков с YouTube Music\n\n"
+        "🎵 **Музыка:** просто напиши название трека — найду на YouTube Music\n\n"
         "Я предложу варианты:\n"
         "🎬 Скачать видео\n"
         "🎵 Скачать аудио\n"
@@ -81,9 +82,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if URL_PATTERN.match(text):
         await handle_link(update, context)
     else:
+        # Plain text — ask what to do, do NOT auto-search
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        context.user_data["vortex_text_query"] = text
         await update.message.reply_text(
-            "Отправь ссылку на видео — я помогу с ним разобраться 🌀"
+            f"📝 «{text[:100]}»\n\nЧто сделать?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎵 Найти музыку", callback_data="text_music")],
+                [InlineKeyboardButton("❌ Ничего", callback_data="text_cancel")],
+            ]),
         )
+
+
+async def handle_text_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle text-menu callbacks: text_music / text_cancel."""
+    query = update.callback_query
+    await query.answer()
+    if not query.data:
+        return
+
+    text = context.user_data.get("vortex_text_query", "")
+    context.user_data.pop("vortex_text_query", None)
+
+    if query.data == "text_music" and text:
+        from handlers.music import run_music_search
+        await query.edit_message_text(f"🎵 Ищу: *{text}*", parse_mode="MARKDOWN")
+        await run_music_search(update, context, text)
+    else:
+        await query.edit_message_text("Ок 👌")
 
 
 async def handle_video_to_circle(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -114,8 +140,8 @@ async def handle_video_to_circle(update: Update, context: ContextTypes.DEFAULT_T
 
         circle_path = res["path"]
         size = os.path.getsize(circle_path)
-        if size > 50 * 1024 * 1024:
-            await status.edit_text(f"⚠️ Кружочек слишком большой ({size // 1024 // 1024} MB), Telegram режет на 50 MB.")
+        if size > 2 * 1024 * 1024 * 1024:
+            await status.edit_text(f"⚠️ Кружочек слишком большой ({size // 1024 // 1024} MB).")
             os.unlink(circle_path)
             return
 
@@ -146,7 +172,25 @@ def main():
         logger.error("OWNER_TELEGRAM_IDS not set in .env")
         return
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    async def post_init(app):
+        """Register command hints (autocomplete menu when user types /)."""
+        from telegram import BotCommand
+        await app.bot.set_my_commands([
+            BotCommand("start", "Как пользоваться ботом"),
+            BotCommand("music", "Найти трек (или просто напиши название)"),
+            BotCommand("admin_plan", "Изменить план пользователя"),
+        ])
+
+    app = Application.builder().token(BOT_TOKEN)
+    app = app.post_init(post_init)
+
+    # Connect to local Bot API server if configured (enables 2 GB file uploads)
+    if TELEGRAM_BOT_API_URL:
+        app = app.base_url(f"{TELEGRAM_BOT_API_URL}/bot")
+        app = app.base_file_url(f"{TELEGRAM_BOT_API_URL}/file/bot")
+        logger.info(f"Using local Bot API: {TELEGRAM_BOT_API_URL}")
+
+    app = app.build()
 
     # Handlers
     app.add_handler(CommandHandler("start", start))
@@ -162,6 +206,14 @@ def main():
         handle_audio_to_voice,
     ))
     app.add_handler(CallbackQueryHandler(handle_music_download, pattern=r"^music_"))
+    app.add_handler(CallbackQueryHandler(
+        handle_text_action,
+        pattern=r"^text_(music|cancel)$",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        handle_quality_choice,
+        pattern=r"^q_",
+    ))
     app.add_handler(CallbackQueryHandler(
         handle_callback,
         pattern=r"^(dl_video|dl_audio|summarize|circle|thumbnail|info)$",

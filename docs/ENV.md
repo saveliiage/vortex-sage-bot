@@ -152,7 +152,7 @@ OPENROUTER_API_KEY=
 
 ### `APIFY_TOKEN`
 
-Токен [Apify](https://console.apify.com/) — для скачивания с TikTok и как fallback для Instagram. Без него эти платформы могут не работать.
+Токен [Apify](https://console.apify.com/) — fallback для TikTok если yt-dlp не смог, и fallback для Instagram. Без него эти платформы всё равно работают, но резервного пути нет.
 
 Где взять:
 1. Зарегистрируйся на [Apify](https://console.apify.com/)
@@ -160,6 +160,23 @@ OPENROUTER_API_KEY=
 
 ```
 APIFY_TOKEN=apify_api_abc123...
+```
+
+### `BOT_API_UID` / `BOT_API_GID`
+
+UID и GID, под которыми запускается контейнер локального Bot API. По умолчанию `1001:1001`. Меняй только если на новой машине этот uid занят или каталог `botapi_data` ему не принадлежит.
+
+```
+BOT_API_UID=1001
+BOT_API_GID=1001
+```
+
+### `TIKTOK_APIFY_FALLBACK`
+
+Аварийный выключатель резервного пути TikTok. По умолчанию `1`: если yt-dlp не осилил ссылку, бот пробует Apify. Поставь `0`, чтобы вообще не тратить квоту Apify.
+
+```
+TIKTOK_APIFY_FALLBACK=1
 ```
 
 ### `DOWNLOAD_DIR`

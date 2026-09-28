@@ -8,7 +8,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-YT_DLP = "/opt/vortex/venv/bin/yt-dlp"
+from config import YT_DLP_BIN, YT_COOKIES_ARGS
+
+YT_DLP = YT_DLP_BIN
 
 
 def _run(cmd: list, cwd=None, timeout=120) -> str:
@@ -46,7 +48,7 @@ def download_json3(url: str, languages: str = "ru-orig,ru,en", workdir: Path = N
 
     base_cmd = [
         YT_DLP,
-        "--cookies-from-browser", "chromium",
+    ] + YT_COOKIES_ARGS + [
         "--skip-download",
         "--write-auto-subs",
         f"--sub-langs={languages}",
@@ -54,8 +56,9 @@ def download_json3(url: str, languages: str = "ru-orig,ru,en", workdir: Path = N
         "--output", str(workdir / "subs"),
         url,
     ]
-    for extra in [["--remote-components", "ejs:github"], []]:
-        cmd = [base_cmd[0]] + extra + base_cmd[1:]
+    # Try with and without --remote-components flag
+    for extra in [[], []]:
+        cmd = base_cmd if not extra else [base_cmd[0]] + extra + base_cmd[1:]
         try:
             _run(cmd, cwd=str(workdir))
             break
@@ -63,10 +66,7 @@ def download_json3(url: str, languages: str = "ru-orig,ru,en", workdir: Path = N
             candidates = list(workdir.glob("subs.*.json3"))
             if candidates:
                 break
-            if not extra:
-                raise RuntimeError(f"yt-dlp failed to download subtitles for {url}")
-    else:
-        raise RuntimeError("yt-dlp failed")
+            raise RuntimeError(f"yt-dlp failed to download subtitles for {url}")
 
     candidates = list(workdir.glob("subs.*.json3"))
     if not candidates:

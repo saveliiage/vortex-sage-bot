@@ -6,12 +6,10 @@ import json
 import subprocess
 from pathlib import Path
 
-from config import DOWNLOAD_DIR, YT_COOKIES_FILE
-
-YT_DLP = "/opt/vortex/venv/bin/yt-dlp"
+from config import DOWNLOAD_DIR, YT_DLP_BIN, YT_COOKIES_ARGS
 
 # YouTube cookies arg
-_YT_COOKIES_ARG = ["--cookies-from-browser", "chromium"]
+_YT_COOKIES_ARG = YT_COOKIES_ARGS
 
 
 def search_youtube_music(query: str, limit: int = 5) -> list:
@@ -55,7 +53,7 @@ def download_music(video_id: str, title: str = "", artist: str = "") -> dict:
     output_path = os.path.join(DOWNLOAD_DIR, filename)
     
     cmd = [
-        YT_DLP,
+        YT_DLP_BIN,
         "--no-playlist",
         "--no-warnings",
         "--extract-audio",

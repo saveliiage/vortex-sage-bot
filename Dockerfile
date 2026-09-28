@@ -3,11 +3,18 @@
 
 FROM python:3.11-slim
 
-# System packages: ffmpeg (media conversion), postgresql-client (pg_dump/pg_restore for backup/restore)
+# System packages: ffmpeg (media conversion), postgresql-client (pg_dump/pg_restore for backup/restore),
+# curl+unzip (needed to install deno JS runtime for yt-dlp YouTube signature solving)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     postgresql-client \
+    curl \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install deno — required by yt-dlp (2026.07+) for YouTube JS challenge solving
+# Without a JS runtime, YouTube downloads fail with HTTP 403 (unsigned format URLs)
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
 # App directory
 WORKDIR /app

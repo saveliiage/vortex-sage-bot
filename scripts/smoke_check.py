@@ -29,9 +29,9 @@ def _function_source(rel: str, name: str) -> str:
 def assert_callback_routing_is_specific() -> None:
     bot = _read("bot.py")
     music = 'CallbackQueryHandler(handle_music_download, pattern=r"^music_"'
-    media = 'CallbackQueryHandler(\n        handle_callback,\n        pattern=r"^(dl_video|dl_audio|summarize|circle|thumbnail|info|save_yes|save_no)$"'
+    media = 'CallbackQueryHandler(\n        handle_callback,\n        pattern=r"^(dl_video|dl_audio|summarize|circle|thumbnail|info)$"'
     assert music in bot, "music callback must be registered with anchored ^music_ pattern"
-    assert media in bot, "generic media callback must be constrained to known media/save actions"
+    assert media in bot, "generic media callback must be constrained to known media actions"
     assert bot.find(music) < bot.find(media), "music callback must be registered before generic callback"
 
 
@@ -52,13 +52,32 @@ def assert_platform_router_used_for_instagram_downloads() -> None:
     assert "_ytdlp_download_with_progress" not in circle, "handle_circle must not call yt-dlp directly"
 
 
+def assert_tiktok_routing_prefers_ytdlp() -> None:
+    """TikTok goes through yt-dlp first (2026.08+ solves the JS challenge); Apify is fallback only."""
+    downloader = _read("core/downloader.py")
+    tiktok = _read("core/tiktok.py")
+
+    assert "from core import instagram, tiktok, apify_tiktok" in downloader, (
+        "core.downloader must import the yt-dlp tiktok module alongside the Apify fallback"
+    )
+    assert "_tiktok_or_fallback(" in downloader, "TikTok platform branches must route through the fallback wrapper"
+    assert "YT_COOKIES_ARGS" not in tiktok, (
+        "core.tiktok must not pass the YouTube cookie jar — it also holds TikTok session cookies "
+        "and TikTok answers 403 when they are sent"
+    )
+    assert 'vcodec^=h264' in tiktok, "TikTok download must prefer H.264 — Telegram cannot play bytevc1/h265"
+
+
 def assert_subtitle_first_flow_exists() -> None:
     download = _read("handlers/download.py")
     summarizer = _read("core/summarizer.py")
-    assert "from core.subtitles_json3 import fetch_transcript" in download, (
-        "YouTube summary handler must use the JSON3 subtitle pipeline"
+    assert "from core.summarizer import summarize_video" in download, (
+        "summary handler must call core.summarizer.summarize_video"
     )
     assert "summarize_video(" in download, "summary handler must call core.summarizer.summarize_video"
+    assert "from core.subtitles_json3 import fetch_transcript" in summarizer, (
+        "summarizer must fetch subtitles through core.subtitles_json3.fetch_transcript"
+    )
     assert "fetch_transcript(url, languages=lang)" in summarizer, (
         "summarizer must fetch subtitles through core.subtitles_json3.fetch_transcript"
     )
@@ -67,6 +86,7 @@ def assert_subtitle_first_flow_exists() -> None:
 def main() -> None:
     assert_callback_routing_is_specific()
     assert_platform_router_used_for_instagram_downloads()
+    assert_tiktok_routing_prefers_ytdlp()
     assert_subtitle_first_flow_exists()
     print("SMOKE_OK")
 

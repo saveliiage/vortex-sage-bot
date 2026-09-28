@@ -20,7 +20,7 @@ Telegram-бот для скачивания, анализа и конверта�
 |-----------|-------|-------|-------|
 | YouTube | ✅ | ✅ | yt-dlp + cookies |
 | Instagram | ✅ | ✅ | Embed API → Apify fallback |
-| TikTok | ✅ | ✅ | Apify (VPS IP blocked) |
+| TikTok | ✅ | ✅ | yt-dlp (Apify fallback) |
 | Twitter/X | ✅ | ✅ | yt-dlp |
 | Vimeo, Dailymotion, др. | ✅ | ✅ | yt-dlp |
 
@@ -113,7 +113,8 @@ python bot.py
 │   ├── circle.py       # Конвертация в video note (кружок)
 │   ├── voice.py        # Конвертация аудио в voice note (голосовое)
 │   ├── instagram.py    # Instagram: embed + Apify fallback
-│   ├── apify_tiktok.py # TikTok через Apify
+│   ├── tiktok.py       # TikTok через yt-dlp (основной путь)
+│   ├── apify_tiktok.py # TikTok через Apify (резервный путь)
 │   ├── transcriber.py  # faster-whisper (локальный STT)
 │   └── vault.py        # Сохранение транскриптов в Obsidian
 └── handlers/
@@ -124,6 +125,8 @@ python bot.py
 ```
 
 ## Systemd сервис
+
+Штатный запуск это Docker Compose, юнит ниже только для варианта без контейнера. Пути замени на свои.
 
 ```ini
 [Unit]

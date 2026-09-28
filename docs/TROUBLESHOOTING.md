@@ -287,16 +287,29 @@
 
 **Как выглядит:** TikTok или Instagram ссылки не скачиваются.
 
-**Причина:** скорее всего проблема с `APIFY_TOKEN`.
+**Причина:** для TikTok сначала идёт yt-dlp, и упасть он может по двум причинам. Первая, сломалось решение JS-челленджа, лечится обновлением образа. Вторая, в куки-файл `cookies/youtube.txt` попали tiktok-куки от Chromium, и TikTok отвечает 403 на любой запрос с ними.
 
 **Что делать:**
 
-1. Проверь заполнен ли `APIFY_TOKEN`:
+1. Посмотри, каким путём пошёл бот:
+   ```bash
+   sudo docker compose logs --tail=50 bot | grep -i tiktok
+   ```
+   Строка `falling back to Apify` означает, что yt-dlp упал и сработал резервный путь.
+
+2. Если нужно понять, работает ли TikTok напрямую:
+   ```bash
+   sudo docker compose exec bot yt-dlp --no-playlist -f "best[ext=mp4][vcodec^=h264]/best[ext=mp4]/best" --skip-download --print "%(format_id)s" "<ссылка>"
+   ```
+
+3. Проверь, что куки-файл не тянет за собой лишнее. Строки `.tiktok.com` и `www.tiktok.com` в `cookies/youtube.txt` ломают прямой путь, их нужно убрать.
+
+4. Ошибка с `APIFY_TOKEN` относится уже к резервному пути, проверь заполнен ли токен:
    ```bash
    grep APIFY_TOKEN .env
    ```
 
-2. Если пусто — получи токен:
+5. Если пусто — получи токен:
    - [Apify Console](https://console.apify.com/) → Settings → Integrations
    - Скопируй API token
 
