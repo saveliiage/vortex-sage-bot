@@ -9,15 +9,12 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
-from config import DOWNLOAD_DIR, YT_DLP_BIN, YT_COOKIES_ARGS
-from core import instagram, tiktok, apify_tiktok
+from config import DOWNLOAD_DIR
+from core import instagram, tiktok, apify_tiktok, ytdlp
 
 log = logging.getLogger(__name__)
 
 FFMPEG = "ffmpeg"
-
-# YouTube cookies args — from config (file-based if available, no browser needed)
-_YT_COOKIES_ARG = YT_COOKIES_ARGS
 
 
 def _platform(url: str) -> str:
@@ -31,19 +28,11 @@ def _platform(url: str) -> str:
 
 
 def _run_ytdlp(args: list, want_path: bool = False) -> dict:
-    """Run yt-dlp. If want_path — args must include `--print after_move:filepath`."""
-    full = [YT_DLP_BIN, "--no-playlist", "--no-warnings"] + _YT_COOKIES_ARG + args
-    proc = subprocess.run(full, capture_output=True, text=True, timeout=600)
-    if proc.returncode != 0:
-        err = proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "yt-dlp failed"
-        return {"success": False, "error": err}
-    out = proc.stdout.strip()
-    if want_path:
-        path = out.splitlines()[-1].strip() if out else ""
-        if not path or not os.path.exists(path):
-            return {"success": False, "error": "yt-dlp не вернул путь к файлу"}
-        return {"success": True, "path": path, "output": out}
-    return {"success": True, "output": out}
+    """Run yt-dlp. If want_path — args must include `--print after_move:filepath`.
+
+    Anonymous first, the cookie jar only as a retry (see core.ytdlp.run).
+    """
+    return ytdlp.run(args, want_path=want_path)
 
 
 def _ffmpeg_to_mp3(src: str) -> dict:

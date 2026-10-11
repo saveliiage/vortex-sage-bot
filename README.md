@@ -95,9 +95,16 @@ python bot.py
 
 ## YouTube cookies
 
-Для скачивания с YouTube бот использует `--cookies-from-browser chromium` — читает cookies напрямую из профиля запущенного Chromium. Никаких файлов cookies.txt, никакого `refresh_cookies.py`. Пока Chromium жив и залогинен в YouTube — работает бессрочно.
+Скачивание с YouTube идёт анонимно, куки подключаются только как вторая попытка (`core/ytdlp.py`).
+Порядок такой: сначала анонимный прогон yt-dlp, и только если он упал по причине похожей на куки
+(403, «Sign in to confirm you're not a bot», age-restricted), идёт повтор с файлом куков.
+Поэтому устаревший файл куков больше не ломает загрузки, он просто не используется.
 
-Требование: `vortex-chromium.service` должен быть запущен и залогинен в YouTube (один раз через noVNC при старте).
+Файл `cookies/youtube.txt` (Netscape, путь из `YT_COOKIES_FILE`) нужен только для контента,
+который YouTube не отдаёт анонимно. Нет файла — всё работает и без него.
+
+Обновление куков требует Chromium, залогиненный в YouTube, с CDP на 127.0.0.1:9222.
+Юниты для этого описаны в `deploy/README.md`, сам скрипт `refresh_cookies.py` рядом с проектом.
 
 ## Структура проекта
 
@@ -107,6 +114,7 @@ python bot.py
 ├── refresh_cookies.py  # Извлечение cookies из Chromium
 ├── core/
 │   ├── downloader.py   # Роутинг по платформам
+│   ├── ytdlp.py        # Единая точка запуска yt-dlp, анонимно, куки только как повтор
 │   ├── progress.py     # Async прогресс-бары для yt-dlp / ffmpeg
 │   ├── summarizer.py   # LiteLLM → Gemini — саммарайз субтитров
 │   ├── music.py        # Поиск и скачивание музыки

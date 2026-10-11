@@ -2,14 +2,9 @@
 
 import os
 import re
-import json
-import subprocess
-from pathlib import Path
 
-from config import DOWNLOAD_DIR, YT_DLP_BIN, YT_COOKIES_ARGS
-
-# YouTube cookies arg
-_YT_COOKIES_ARG = YT_COOKIES_ARGS
+from config import DOWNLOAD_DIR
+from core import ytdlp
 
 
 def search_youtube_music(query: str, limit: int = 5) -> list:
@@ -51,11 +46,8 @@ def download_music(video_id: str, title: str = "", artist: str = "") -> dict:
     safe_artist = re.sub(r'[^\w\s\-\.]', '', artist or "unknown")[:60]
     filename = f"{safe_artist} - {safe_title}.mp3"
     output_path = os.path.join(DOWNLOAD_DIR, filename)
-    
-    cmd = [
-        YT_DLP_BIN,
-        "--no-playlist",
-        "--no-warnings",
+
+    args = [
         "--extract-audio",
         "--audio-format", "mp3",
         "--audio-quality", "0",
@@ -63,20 +55,15 @@ def download_music(video_id: str, title: str = "", artist: str = "") -> dict:
         "--embed-thumbnail",
         "-o", output_path,
         "--print", "after_move:filepath",
-    ] + _YT_COOKIES_ARG + [
-        f"https://music.youtube.com/watch?v={video_id}"
+        f"https://music.youtube.com/watch?v={video_id}",
     ]
-    
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-    if proc.returncode != 0:
-        err = proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "yt-dlp failed"
-        return {"success": False, "error": err}
-    
-    path = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
-    if not path or not os.path.exists(path):
-        return {"success": False, "error": "Файл не найден после скачивания"}
-    
-    return {"success": True, "path": path, "title": f"{safe_artist} - {safe_title}"}
+
+    # Anonymous first, the cookie jar only as a retry — a stale jar must not break the track.
+    result = ytdlp.run(args, want_path=True, timeout=300)
+    if not result["success"]:
+        return {"success": False, "error": result.get("error", "yt-dlp failed")}
+
+    return {"success": True, "path": result["path"], "title": f"{safe_artist} - {safe_title}"}
 
 
 def format_track_info(track: dict) -> str:

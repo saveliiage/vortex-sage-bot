@@ -9,9 +9,8 @@ from telegram.constants import ParseMode
 from core.downloader import download_video, download_audio, get_info, download_thumbnail, get_formats, download_video_quality
 from core.circle import convert_to_circle
 from core.progress import run_ytdlp, run_ffmpeg_with_progress
-from config import TELEGRAM_FILE_SIZE, DOWNLOAD_DIR, YT_DLP_BIN, YT_COOKIES_ARGS
-
-_YT_COOKIES_ARG = YT_COOKIES_ARGS
+from core import ytdlp
+from config import TELEGRAM_FILE_SIZE, DOWNLOAD_DIR
 
 
 # ── Error helpers ────────────────────────────────────────────────────────────
@@ -112,13 +111,20 @@ async def _ytdlp_download_with_progress(
 ) -> dict:
     """Download using async yt-dlp with progress. Returns {success, path}."""
     output_template = os.path.join(DOWNLOAD_DIR, "%(title).100s_%(epoch)s.%(ext)s")
-    result = await run_ytdlp(
-        [YT_DLP_BIN, "--no-playlist", "--no-warnings"]
-        + _YT_COOKIES_ARG
-        + ["-f", format_spec, "-o", output_template, "--print", "after_move:filepath", url],
-        progress_callback=progress_callback,
-        label=label,
-    )
+    args = ["-f", format_spec, "-o", output_template, "--print", "after_move:filepath", url]
+    # Anonymous first, the cookie jar only as a retry — same rule as core.ytdlp.run.
+    profiles = ytdlp.cookie_profiles()
+    result = {"success": False, "error": "yt-dlp failed"}
+    for index, profile in enumerate(profiles):
+        result = await run_ytdlp(
+            ytdlp.build_cmd(args, profile),
+            progress_callback=progress_callback,
+            label=label,
+        )
+        if result["success"]:
+            break
+        if index + 1 >= len(profiles) or not ytdlp.cookie_related(result.get("error", "")):
+            break
     if not result["success"]:
         return result
     path = result["output"].splitlines()[-1].strip() if result["output"] else ""

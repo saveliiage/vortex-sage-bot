@@ -4,20 +4,10 @@ No external deps beyond yt-dlp."""
 
 import json
 import re
-import subprocess
 import tempfile
 from pathlib import Path
 
-from config import YT_DLP_BIN, YT_COOKIES_ARGS
-
-YT_DLP = YT_DLP_BIN
-
-
-def _run(cmd: list, cwd=None, timeout=120) -> str:
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout)
-    if r.returncode != 0:
-        raise RuntimeError(r.stderr.strip()[:500])
-    return r.stdout
+from core import ytdlp
 
 
 def _extract_video_id(url: str) -> str:
@@ -29,8 +19,10 @@ def _extract_video_id(url: str) -> str:
 
 def _fetch_info(url: str) -> dict:
     try:
-        out = _run([YT_DLP, "--dump-json", "--skip-download", url], timeout=60)
-        data = json.loads(out.splitlines()[0])
+        res = ytdlp.run(["--dump-json", "--skip-download", url], timeout=60)
+        if not res["success"]:
+            raise RuntimeError(res.get("error", "yt-dlp failed"))
+        data = json.loads(res["output"].splitlines()[0])
         return {
             "title": data.get("title", "Unknown"),
             "duration": data.get("duration", 0),
@@ -46,31 +38,25 @@ def download_json3(url: str, languages: str = "ru-orig,ru,en", workdir: Path = N
     if workdir is None:
         workdir = Path(tempfile.mkdtemp(prefix="vortex_subs_"))
 
-    base_cmd = [
-        YT_DLP,
-    ] + YT_COOKIES_ARGS + [
-        "--skip-download",
-        "--write-auto-subs",
-        f"--sub-langs={languages}",
-        "--sub-format", "json3",
-        "--output", str(workdir / "subs"),
-        url,
-    ]
-    # Try with and without --remote-components flag
-    for extra in [[], []]:
-        cmd = base_cmd if not extra else [base_cmd[0]] + extra + base_cmd[1:]
-        try:
-            _run(cmd, cwd=str(workdir))
-            break
-        except RuntimeError:
-            candidates = list(workdir.glob("subs.*.json3"))
-            if candidates:
-                break
-            raise RuntimeError(f"yt-dlp failed to download subtitles for {url}")
+    # Cookie profile handling (anonymous first) lives in core.ytdlp.
+    result = ytdlp.run(
+        [
+            "--skip-download",
+            "--write-auto-subs",
+            f"--sub-langs={languages}",
+            "--sub-format", "json3",
+            "--output", str(workdir / "subs"),
+            url,
+        ],
+        cwd=str(workdir),
+        timeout=180,
+    )
 
     candidates = list(workdir.glob("subs.*.json3"))
     if not candidates:
-        raise RuntimeError("No subtitles available. Video may have subtitles disabled.")
+        if result.get("success"):
+            raise RuntimeError("No subtitles available. Video may have subtitles disabled.")
+        raise RuntimeError(result.get("error") or f"yt-dlp failed to download subtitles for {url}")
 
     pref_order = ["ru-orig", "ru", "en"]
     for pref in pref_order:

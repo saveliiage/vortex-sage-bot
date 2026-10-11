@@ -63,17 +63,17 @@ YT_DLP_BIN = shutil.which("yt-dlp") or os.getenv("YT_DLP_BIN", "/opt/vortex/venv
 # If empty, yt-dlp runs without cookies (may fail on some restricted videos).
 YT_COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "")
 
-# Build yt-dlp cookies args dynamically
-def _build_yt_cookies_args() -> list:
-    """Build yt-dlp cookie arguments based on config."""
-    args = []
-    if YT_COOKIES_FILE and os.path.exists(YT_COOKIES_FILE):
-        args += ["--cookies", YT_COOKIES_FILE]
-    # --remote-components is needed for some yt-dlp versions
-    args += ["--remote-components", "ejs:github"]
-    return args
 
-YT_COOKIES_ARGS = _build_yt_cookies_args()
+def _existing_cookies_file() -> str:
+    """Cookie jar path, empty when the configured file is missing."""
+    return YT_COOKIES_FILE if (YT_COOKIES_FILE and os.path.exists(YT_COOKIES_FILE)) else ""
+
+
+# Two cookie profiles for yt-dlp, consumed by core.ytdlp: downloads go out anonymously first
+# and only retry with the jar, so a stale jar cannot break a download that works without it.
+YT_COOKIES_JAR_ARGS = ["--cookies", _existing_cookies_file()] if _existing_cookies_file() else []
+YT_COOKIES_EXTRA_ARGS = ["--remote-components", "ejs:github"]  # needed for some yt-dlp versions
+YT_COOKIES_ARGS = YT_COOKIES_JAR_ARGS + YT_COOKIES_EXTRA_ARGS  # full profile, legacy callers
 
 # Ensure dirs exist
 for _d in (DOWNLOAD_DIR, TRANSCRIPTS_DIR):

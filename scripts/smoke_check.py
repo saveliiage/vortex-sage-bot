@@ -83,11 +83,37 @@ def assert_subtitle_first_flow_exists() -> None:
     )
 
 
+def assert_downloads_go_anonymous_first() -> None:
+    """A stale cookie jar must not break downloads: run anonymously, retry with the jar.
+
+    Regression this pins: the jar was prepended to every yt-dlp run, so an expired YouTube
+    session turned every download into `HTTP Error 403: Forbidden` on videoplayback.
+    """
+    runner = _read("core/ytdlp.py")
+    downloader = _read("core/downloader.py")
+    handler = _read("handlers/download.py")
+
+    assert "def cookie_profiles() -> list:" in runner, (
+        "core.ytdlp must own the anonymous-first cookie profiles"
+    )
+    assert "def cookie_related(error: str) -> bool:" in runner, (
+        "core.ytdlp must own the cookie-error classifier that gates the retry"
+    )
+    assert "ytdlp.run(" in downloader, "core.downloader must run yt-dlp through core.ytdlp.run"
+    assert "ytdlp.cookie_profiles()" in handler, (
+        "the progress download path must share the same anonymous-first fallback"
+    )
+    assert "_YT_COOKIES_ARG = YT_COOKIES_ARGS" not in downloader, (
+        "cookie args must not be hard-wired into the yt-dlp prefix"
+    )
+
+
 def main() -> None:
     assert_callback_routing_is_specific()
     assert_platform_router_used_for_instagram_downloads()
     assert_tiktok_routing_prefers_ytdlp()
     assert_subtitle_first_flow_exists()
+    assert_downloads_go_anonymous_first()
     print("SMOKE_OK")
 
 
