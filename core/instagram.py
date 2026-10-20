@@ -179,7 +179,22 @@ def download_video(url: str) -> dict:
             os.unlink(fpath)
         return {"success": False, "error": f"Не удалось скачать видео: {e}"}
 
-    return {"success": True, "path": fpath, "title": meta["title"]}
+    # Cover for sendVideo: Telegram does not generate one for large files.
+    thumb_path = ""
+    if meta.get("thumbnail"):
+        candidate = os.path.join(DOWNLOAD_DIR, f"ig_thumb_{meta['shortcode']}_{uuid.uuid4().hex[:6]}.jpg")
+        try:
+            tr = httpx.get(
+                meta["thumbnail"], headers={"User-Agent": MOBILE_UA}, timeout=30, follow_redirects=True
+            )
+            tr.raise_for_status()
+            with open(candidate, "wb") as tf:
+                tf.write(tr.content)
+            thumb_path = candidate
+        except (httpx.HTTPError, OSError):
+            thumb_path = ""
+
+    return {"success": True, "path": fpath, "title": meta["title"], "thumbnail_path": thumb_path}
 
 
 def download_thumbnail(url: str) -> dict:

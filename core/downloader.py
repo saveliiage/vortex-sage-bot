@@ -35,6 +35,54 @@ def _run_ytdlp(args: list, want_path: bool = False) -> dict:
     return ytdlp.run(args, want_path=want_path)
 
 
+def probe_video(path: str) -> dict:
+    """Real width/height/duration of a local video file, empty dict when unknown.
+
+    Telegram's own media probe gives up on videos above roughly 10 MB and stores a 320x320
+    stub with duration 0, which every client then stretches into a square. Sending the real
+    numbers in sendVideo keeps the geometry intact (verified: 720x1280 survives that way,
+    while the same file without explicit dims comes back as a square).
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height:stream_side_data=rotation:format=duration",
+                "-of", "json", path,
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+        if proc.returncode != 0:
+            return {}
+        data = json.loads(proc.stdout or "{}")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+
+    stream = (data.get("streams") or [{}])[0]
+    try:
+        width = int(stream.get("width") or 0)
+        height = int(stream.get("height") or 0)
+    except (TypeError, ValueError):
+        return {}
+    if not width or not height:
+        return {}
+
+    # A 90 degree display matrix means the player swaps the axes, do the same here.
+    for side in stream.get("side_data_list") or []:
+        try:
+            if abs(int(side.get("rotation") or 0)) in (90, 270):
+                width, height = height, width
+                break
+        except (TypeError, ValueError):
+            continue
+
+    try:
+        duration = int(round(float((data.get("format") or {}).get("duration") or 0)))
+    except (TypeError, ValueError):
+        duration = 0
+    return {"width": width, "height": height, "duration": duration}
+
+
 def _ffmpeg_to_mp3(src: str) -> dict:
     """Convert any media to mp3."""
     dst = os.path.splitext(src)[0] + f"_{uuid.uuid4().hex[:6]}.mp3"

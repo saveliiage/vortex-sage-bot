@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from core.downloader import download_video, download_audio, get_info, download_thumbnail, get_formats, download_video_quality
+from core.downloader import download_video, download_audio, get_info, download_thumbnail, get_formats, download_video_quality, probe_video
 from core.circle import convert_to_circle
 from core.progress import run_ytdlp, run_ffmpeg_with_progress
 from core import ytdlp
@@ -90,6 +90,22 @@ def _media_caption(url: str, filepath: str) -> str | None:
     return _clean_title_from_filepath(filepath)
 
 
+def _video_send_kwargs(filepath: str, thumbnail: str | None = None) -> dict:
+    """sendVideo kwargs that keep the real geometry.
+
+    Telegram's own probe fails on videos above roughly 10 MB and stores 320x320 with duration
+    0, so clients stretch the picture into a square. Passing the numbers we read locally (and
+    a thumbnail when we already have one) keeps portrait video portrait.
+    """
+    kwargs: dict = {"supports_streaming": True}
+    meta = probe_video(filepath)
+    if meta:
+        kwargs.update({k: v for k, v in meta.items() if v})
+    if thumbnail and os.path.exists(thumbnail):
+        kwargs["thumbnail"] = thumbnail
+    return kwargs
+
+
 # ── Handlers ─────────────────────────────────────────────────────────────────
 
 
@@ -158,7 +174,7 @@ async def handle_download_video(update: Update, context: ContextTypes.DEFAULT_TY
             await update.effective_chat.send_video(
                 video=f,
                 caption=_media_caption(url, filepath),
-                supports_streaming=True,
+                **_video_send_kwargs(filepath, result.get("thumbnail_path")),
             )
         os.unlink(filepath)
         return
@@ -183,7 +199,7 @@ async def handle_download_video(update: Update, context: ContextTypes.DEFAULT_TY
             await update.effective_chat.send_video(
                 video=f,
                 caption=f"✅ Готово | {os.path.basename(filepath)}",
-                supports_streaming=True,
+                **_video_send_kwargs(filepath, result.get("thumbnail_path")),
             )
         os.unlink(filepath)
         return
@@ -448,7 +464,7 @@ async def handle_quality_choice(update: Update, context: ContextTypes.DEFAULT_TY
         await update.effective_chat.send_video(
             video=f,
             caption=_media_caption(url, filepath),
-            supports_streaming=True,
+            **_video_send_kwargs(filepath, result.get("thumbnail_path")),
         )
 
     os.unlink(filepath)

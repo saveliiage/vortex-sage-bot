@@ -108,12 +108,34 @@ def assert_downloads_go_anonymous_first() -> None:
     )
 
 
+def assert_videos_send_their_real_geometry() -> None:
+    """Telegram stores a 320x320 stub for videos above ~10 MB unless sendVideo carries dims.
+
+    Regression this pins: portrait reels arrived squashed into a square because the bot let
+    Telegram probe the file, and that probe gives up on anything above roughly 10 MB.
+    """
+    download = _read("handlers/download.py")
+    downloader = _read("core/downloader.py")
+
+    assert "def probe_video(path: str) -> dict:" in downloader, (
+        "core.downloader must expose probe_video for width/height/duration"
+    )
+    assert "def _video_send_kwargs(" in download, "sendVideo calls must share one kwargs helper"
+    assert download.count("_video_send_kwargs(filepath") >= 3, (
+        "every sendVideo call must pass the real geometry"
+    )
+    assert "supports_streaming=True," not in download, (
+        "a bare sendVideo without dimensions squashes large videos into a square"
+    )
+
+
 def main() -> None:
     assert_callback_routing_is_specific()
     assert_platform_router_used_for_instagram_downloads()
     assert_tiktok_routing_prefers_ytdlp()
     assert_subtitle_first_flow_exists()
     assert_downloads_go_anonymous_first()
+    assert_videos_send_their_real_geometry()
     print("SMOKE_OK")
 
 
