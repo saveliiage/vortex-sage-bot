@@ -129,6 +129,25 @@ def assert_videos_send_their_real_geometry() -> None:
     )
 
 
+def assert_instagram_posts_keep_their_shape() -> None:
+    """An Instagram photo post must not be routed through the video-only downloader.
+
+    Regression this pins: photo posts failed with a video error, because every Instagram link
+    went to download_video and no video_url existed.
+    """
+    instagram = _read("core/instagram.py")
+    download = _read("handlers/download.py")
+
+    assert "def parse_post(" in instagram, "core.instagram must parse the whole post"
+    assert "def download_post(" in instagram, "core.instagram must download photos too"
+    assert "CTX_MARKER" in instagram and '"contextJSON"' in instagram, (
+        "carousel children and full-size images live in the embed contextJSON payload"
+    )
+    assert "download_post" in download, "the Instagram branch must use download_post"
+    assert "_send_instagram_post(" in download, "photos and albums need their own send path"
+    assert "send_media_group" in download, "carousels must go out as an album"
+
+
 def main() -> None:
     assert_callback_routing_is_specific()
     assert_platform_router_used_for_instagram_downloads()
@@ -136,6 +155,7 @@ def main() -> None:
     assert_subtitle_first_flow_exists()
     assert_downloads_go_anonymous_first()
     assert_videos_send_their_real_geometry()
+    assert_instagram_posts_keep_their_shape()
     print("SMOKE_OK")
 
 

@@ -7,7 +7,7 @@ from telegram import Update
 
 
 ACTIONS = {
-    "dl_video": "🎬 Скачать видео",
+    "dl_video": "⬇️ Скачать",
     "dl_audio": "🎵 Скачать аудио",
     "summarize": "📝 Сделать саммарайз",
     "circle": "🔵 Кружочек",

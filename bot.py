@@ -52,11 +52,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🌀 **Vortex** — твой медиа-хаб.\n\n"
-        "📎 **Скачивание:** отправь ссылку на видео с YouTube, TikTok, Instagram,\n"
-        "Pinterest, Twitter/X, Vimeo или любого другого сайта.\n\n"
+        "📎 **Скачивание:** отправь ссылку на видео или пост с фото с YouTube, TikTok, Instagram,\n"
+        "Pinterest, Twitter/X, Vimeo или любого другого сайта. Карусели из инсты приходят альбомом.\n\n"
         "🎵 **Музыка:** просто напиши название трека — найду на YouTube Music\n\n"
         "Я предложу варианты:\n"
-        "🎬 Скачать видео\n"
+        "⬇️ Скачать\n"
         "🎵 Скачать аудио\n"
         "📝 Сделать саммарайз\n"
         "🔵 Кружочек\n"

@@ -1,5 +1,6 @@
 """Download handlers — process media links and actions with progress bars."""
 
+import asyncio
 import os
 import re
 from telegram import Update
@@ -33,6 +34,8 @@ _ERROR_TEMPLATES = {
     "В ответе Apify нет ссылки на mp4": "❌ Сервис не отдал ссылку на видео. Попробуй позже или другим способом.",
     "Apify запрос упал": "❌ Сервис скачивания временно недоступен. Попробуй позже.",
     "Не удалось скачать видео": "❌ Не удалось скачать видео с этой платформы.",
+    "Не удалось скачать фото": "❌ Не удалось скачать фото с этой платформы.",
+    "В этом посте нет видео, только фото": "🖼 Это пост с фото, звука там нет.",
     "Не удалось скачать аудио": "❌ Не удалось извлечь аудио.",
 }
 
@@ -106,6 +109,55 @@ def _video_send_kwargs(filepath: str, thumbnail: str | None = None) -> dict:
     return kwargs
 
 
+def _cleanup_media(paths: list) -> None:
+    for path in paths:
+        if not path:
+            continue
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+async def _send_instagram_post(update, result: dict, url: str = "") -> None:
+    """Instagram posts keep their shape — a photo stays a photo, a carousel becomes an album."""
+    from telegram import InputMediaPhoto, InputMediaVideo
+
+    items = result["items"]
+    paths = [item["path"] for item in items] + [result.get("thumbnail_path", "")]
+    try:
+        if len(items) == 1 and items[0]["type"] == "photo":
+            with open(items[0]["path"], "rb") as f:
+                await update.effective_chat.send_photo(photo=f)
+            return
+        if len(items) == 1:
+            path = items[0]["path"]
+            with open(path, "rb") as f:
+                await update.effective_chat.send_video(
+                    video=f,
+                    caption=_media_caption(url, path),
+                    **_video_send_kwargs(path, result.get("thumbnail_path")),
+                )
+            return
+
+        handles = []
+        media = []
+        try:
+            for item in items:
+                handle = open(item["path"], "rb")
+                handles.append(handle)
+                if item["type"] == "video":
+                    media.append(InputMediaVideo(media=handle))
+                else:
+                    media.append(InputMediaPhoto(media=handle))
+            await update.effective_chat.send_media_group(media=media)
+        finally:
+            for handle in handles:
+                handle.close()
+    finally:
+        _cleanup_media(paths)
+
+
 # ── Handlers ─────────────────────────────────────────────────────────────────
 
 
@@ -154,12 +206,36 @@ async def handle_download_video(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     status = await query.edit_message_text("🔍 Проверяю доступные качества...")
 
-    # Instagram/TikTok — no format selection, download directly
     from core.downloader import _platform
     plat = _platform(url)
-    if plat in ("instagram", "tiktok"):
+
+    # Instagram — one call covers reel, single photo and carousel
+    if plat == "instagram":
+        from core import instagram
+        await _edit(status, "⬇️ Скачиваю...")
+        result = await asyncio.to_thread(instagram.download_post, url)
+        if not result["success"]:
+            await _edit(status, humanize_error(result.get("error", "")))
+            return
+        total = sum(os.path.getsize(item["path"]) for item in result["items"])
+        if total > TELEGRAM_FILE_SIZE:
+            _cleanup_media([item["path"] for item in result["items"]])
+            await _edit(status, f"⚠️ Пост слишком большой ({total // 1024 // 1024} MB).")
+            return
+        await _edit(status, "📤 Отправляю...")
+        await _send_instagram_post(update, result, url)
+        total_items = result.get("total_items") or len(result["items"])
+        if total_items > len(result["items"]):
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"ℹ️ В посте {total_items} файлов, отправил первые {len(result['items'])} (лимит альбома в Telegram).",
+            )
+        return
+
+    # TikTok — no format selection, download directly
+    if plat == "tiktok":
         await _edit(status, "⬇️ Скачиваю видео...")
-        result = download_video(url)
+        result = await asyncio.to_thread(download_video, url)
         if not result["success"]:
             await _edit(status, humanize_error(result.get("error", "")))
             return

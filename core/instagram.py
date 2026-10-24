@@ -1,9 +1,11 @@
 """Instagram fetcher.
 
 Strategy:
-1. Try the public embed page (free, instant, works for ~most public reels).
-2. If embed doesn't return a video_url (some reels Instagram refuses to serve to
-   datacenter IPs anonymously), fall back to Apify's apify/instagram-scraper.
+1. Parse the public embed page. Its `contextJSON` payload carries the whole post —
+   single photo, carousel (all children, full resolution) or reel — so one parse covers
+   every post type.
+2. Fall back to the older plain regexes on the same page (reels only).
+3. Fall back to Apify's apify/instagram-scraper (video posts only).
 """
 
 import json
@@ -26,9 +28,12 @@ UAS = [
     "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36",
 ]
 MOBILE_UA = UAS[1]  # for direct media downloads
-VIDEO_RE = re.compile(r'\\"video_url\\":\\"([^"]+?)\\"')
-THUMB_RE = re.compile(r'\\"display_url\\":\\"([^"]+?)\\"')
-CAPTION_RE = re.compile(r'\\"caption\\":\\"((?:[^"\\]|\\.)*?)\\"')
+VIDEO_RE = re.compile(r'\\\\"video_url\\\\":\\\\"([^"]+?)\\\\"')
+THUMB_RE = re.compile(r'\\\\"display_url\\\\":\\\\"([^"]+?)\\\\"')
+CAPTION_RE = re.compile(r'\\\\"caption\\\\":\\\\"((?:[^"\\\\]|\\\\.)*?)\\\\"')
+CTX_MARKER = '"contextJSON":"'
+FULL_SIZE_WIDTH = 1000  # display_resources below this are downscaled copies
+MAX_ALBUM_ITEMS = 10  # Telegram media group limit
 
 
 def _unescape(raw: str) -> str:
@@ -52,11 +57,96 @@ def _parse_shortcode(url: str) -> tuple[str, str] | None:
     return None
 
 
-def fetch_metadata(url: str) -> dict:
-    """Get video URL + thumb + caption from Instagram embed page."""
+def _slice_json_string(body: str, start: int) -> str | None:
+    """Raw content of a JSON string that begins at `start`.
+
+    Instagram escapes this payload twice (it is JSON inside a JSON string), so the closing
+    quote is the first one preceded by an even number of backslashes.
+    """
+    out = []
+    backslashes = 0
+    for ch in body[start:]:
+        if ch == "\\":
+            backslashes += 1
+            out.append(ch)
+            continue
+        if ch == '"' and backslashes % 2 == 0:
+            return "".join(out)
+        backslashes = 0
+        out.append(ch)
+        if len(out) > 2_000_000:
+            return None
+    return None
+
+
+def _decode_layers(text: str, depth: int = 4) -> dict | None:
+    """json.loads the text, peeling one escaping layer at a time until it yields a dict."""
+    current = text
+    for _ in range(depth):
+        try:
+            value = json.loads(current)
+        except (json.JSONDecodeError, ValueError):
+            value = None
+        if isinstance(value, dict):
+            return value
+        try:
+            current = json.loads('"' + current + '"')
+        except (json.JSONDecodeError, ValueError):
+            return None
+    return None
+
+
+def _post_media(body: str) -> dict | None:
+    """shortcode_media object out of the embed's contextJSON, None when not published."""
+    index = body.find(CTX_MARKER)
+    if index < 0:
+        return None
+    raw = _slice_json_string(body, index + len(CTX_MARKER))
+    if not raw:
+        return None
+    data = _decode_layers(raw) or {}
+    return ((data.get("gql_data") or {}).get("shortcode_media") or None)
+
+
+def _best_image(node: dict) -> str:
+    """Full-resolution image URL of one media node."""
+    best = node.get("display_url") or ""
+    for res in node.get("display_resources") or []:
+        if (res.get("config_width") or 0) >= FULL_SIZE_WIDTH and res.get("src"):
+            best = res["src"]
+    return best
+
+
+def _post_items(media: dict) -> list:
+    """Flatten a post into [{'type': 'photo'|'video', 'url': ...}]."""
+    children = ((media.get("edge_sidecar_to_children") or {}).get("edges") or [])
+    nodes = [edge.get("node") or {} for edge in children] or [media]
+    items = []
+    for node in nodes:
+        if node.get("is_video"):
+            url = node.get("video_url") or ""
+            if url:
+                items.append({"type": "video", "url": url})
+            continue
+        url = _best_image(node)
+        if url:
+            items.append({"type": "photo", "url": url})
+    return items
+
+
+def _post_caption(media: dict) -> str:
+    for edge in ((media.get("edge_media_to_caption") or {}).get("edges") or []):
+        text = ((edge.get("node") or {}).get("text") or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _embed_body(url: str) -> tuple[str, str, str, str]:
+    """(body, shortcode, kind, last_error) for an Instagram URL."""
     parsed = _parse_shortcode(url)
     if not parsed:
-        return {"success": False, "error": "Не похоже на Instagram URL"}
+        return "", "", "", "Не похоже на Instagram URL"
     kind, shortcode = parsed
 
     embed_url = EMBED_TPL.format(kind=kind, shortcode=shortcode)
@@ -67,56 +157,98 @@ def fetch_metadata(url: str) -> dict:
             r = httpx.get(embed_url, headers={"User-Agent": ua}, timeout=30, follow_redirects=True)
             r.raise_for_status()
             body = r.text
-            if VIDEO_RE.search(body):
+            if CTX_MARKER in body or VIDEO_RE.search(body):
                 break
-            last_err = f"UA={ua[:40]} len={len(body)} — нет video_url"
+            last_err = f"UA={ua[:40]} len={len(body)} — нет данных поста"
         except httpx.HTTPError as e:
             last_err = f"UA={ua[:40]} — {e}"
+    return body, shortcode, kind, last_err
 
-    m = VIDEO_RE.search(body)
-    if not m:
-        log.info("IG embed didn't yield video_url, trying Apify fallback (%s)", last_err)
-        apify = _apify_fallback(url)
-        if apify["success"]:
-            apify["shortcode"] = shortcode
-            apify["webpage_url"] = f"https://www.instagram.com/{kind}/{shortcode}/"
-            return apify
+
+def parse_post(url: str) -> dict:
+    """Everything a post holds — kind ∈ {video, photo, album}, items with media URLs."""
+    body, shortcode, kind, last_err = _embed_body(url)
+    if not body:
+        return {"success": False, "error": last_err or "Instagram не отдал страницу поста"}
+
+    media = _post_media(body)
+    if media:
+        items = _post_items(media)
+        if items:
+            caption = _post_caption(media)
+            title = caption.split("\n")[0][:100] or shortcode
+            if len(items) > 1:
+                post_kind = "album"
+            else:
+                post_kind = items[0]["type"]
+            return {
+                "success": True,
+                "kind": post_kind,
+                "items": items,
+                "title": title,
+                "caption": caption,
+                "thumbnail": _best_image(media) or next(
+                    (i["url"] for i in items if i["type"] == "photo"), ""
+                ),
+                "platform": "Instagram",
+                "shortcode": shortcode,
+                "webpage_url": f"https://www.instagram.com/{kind}/{shortcode}/",
+            }
+
+    # Older reels pages only carry the plain video_url / display_url fields.
+    match = VIDEO_RE.search(body)
+    if match:
+        try:
+            video_url = _unescape(match.group(1))
+        except (json.JSONDecodeError, ValueError) as e:
+            return {"success": False, "error": f"Не разобрал video_url: {e}"}
+        thumbnail = ""
+        thumb_match = THUMB_RE.search(body)
+        if thumb_match:
+            try:
+                thumbnail = _unescape(thumb_match.group(1))
+            except (json.JSONDecodeError, ValueError):
+                pass
+        title = shortcode
+        caption_match = CAPTION_RE.search(body)
+        if caption_match:
+            try:
+                title = _unescape(caption_match.group(1)).split("\n")[0][:100] or shortcode
+            except (json.JSONDecodeError, ValueError):
+                pass
         return {
-            "success": False,
-            "error": f"Embed: {last_err}. Apify: {apify.get('error')}",
+            "success": True,
+            "kind": "video",
+            "items": [{"type": "video", "url": video_url}],
+            "title": title,
+            "caption": "",
+            "thumbnail": thumbnail,
+            "platform": "Instagram",
+            "shortcode": shortcode,
+            "webpage_url": f"https://www.instagram.com/{kind}/{shortcode}/",
         }
 
-    try:
-        video_url = _unescape(m.group(1))
-    except (json.JSONDecodeError, ValueError) as e:
-        return {"success": False, "error": f"Не разобрал video_url: {e}"}
+    log.info("IG embed didn't yield post data, trying Apify fallback (%s)", last_err)
+    apify = _apify_fallback(url)
+    if apify["success"]:
+        apify["kind"] = "video"
+        apify["items"] = [{"type": "video", "url": apify["video_url"]}]
+        apify["shortcode"] = shortcode
+        apify["webpage_url"] = f"https://www.instagram.com/{kind}/{shortcode}/"
+        return apify
+    return {"success": False, "error": f"Embed: {last_err}. Apify: {apify.get('error')}"}
 
-    thumb_match = THUMB_RE.search(body)
-    caption_match = CAPTION_RE.search(body)
-    thumbnail = ""
-    if thumb_match:
-        try:
-            thumbnail = _unescape(thumb_match.group(1))
-        except (json.JSONDecodeError, ValueError):
-            pass
 
-    title = shortcode
-    if caption_match:
-        try:
-            decoded = _unescape(caption_match.group(1))
-            title = decoded.split("\n")[0][:100] or shortcode
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-    return {
-        "success": True,
-        "title": title,
-        "video_url": video_url,
-        "thumbnail": thumbnail,
-        "platform": "Instagram",
-        "shortcode": shortcode,
-        "webpage_url": f"https://www.instagram.com/{kind}/{shortcode}/",
-    }
+def fetch_metadata(url: str) -> dict:
+    """Metadata for one post. Keeps the historical shape (`video_url` for video posts)."""
+    post = parse_post(url)
+    if not post.get("success"):
+        return post
+    meta = dict(post)
+    first_video = next((i["url"] for i in post["items"] if i["type"] == "video"), "")
+    if first_video:
+        meta["video_url"] = first_video
+    return meta
 
 
 def _apify_fallback(url: str) -> dict:
@@ -158,47 +290,100 @@ def _apify_fallback(url: str) -> dict:
     }
 
 
-def download_video(url: str) -> dict:
-    """Fetch IG embed → stream mp4 to disk. Returns local path."""
-    meta = fetch_metadata(url)
-    if not meta["success"]:
-        return meta
-
-    safe_title = re.sub(r"[^\w\-_. ]", "_", meta["title"])[:80] or meta["shortcode"]
-    fname = f"ig_{meta['shortcode']}_{uuid.uuid4().hex[:6]}_{safe_title}.mp4"
-    fpath = os.path.join(DOWNLOAD_DIR, fname)
-
+def _save_media(url: str, path: str, timeout: int = 120) -> bool:
+    """Stream one media URL to disk. Removes the partial file when the transfer fails."""
     try:
-        with httpx.stream("GET", meta["video_url"], headers={"User-Agent": MOBILE_UA}, timeout=120, follow_redirects=True) as r:
+        with httpx.stream("GET", url, headers={"User-Agent": MOBILE_UA}, timeout=timeout,
+                          follow_redirects=True) as r:
             r.raise_for_status()
-            with open(fpath, "wb") as f:
+            with open(path, "wb") as f:
                 for chunk in r.iter_bytes(64 * 1024):
                     f.write(chunk)
-    except httpx.HTTPError as e:
-        if os.path.exists(fpath):
-            os.unlink(fpath)
-        return {"success": False, "error": f"Не удалось скачать видео: {e}"}
+        return os.path.getsize(path) > 0
+    except (httpx.HTTPError, OSError) as e:
+        log.warning("IG media download failed (%s): %s", url[:80], e)
+        if os.path.exists(path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        return False
 
-    # Cover for sendVideo: Telegram does not generate one for large files.
-    thumb_path = ""
-    if meta.get("thumbnail"):
-        candidate = os.path.join(DOWNLOAD_DIR, f"ig_thumb_{meta['shortcode']}_{uuid.uuid4().hex[:6]}.jpg")
-        try:
-            tr = httpx.get(
-                meta["thumbnail"], headers={"User-Agent": MOBILE_UA}, timeout=30, follow_redirects=True
-            )
-            tr.raise_for_status()
-            with open(candidate, "wb") as tf:
-                tf.write(tr.content)
-            thumb_path = candidate
-        except (httpx.HTTPError, OSError):
-            thumb_path = ""
 
-    return {"success": True, "path": fpath, "title": meta["title"], "thumbnail_path": thumb_path}
+def _save_thumbnail(url: str, shortcode: str) -> str:
+    """Cover file for sendVideo — Telegram does not generate one for large videos."""
+    if not url:
+        return ""
+    candidate = os.path.join(DOWNLOAD_DIR, f"ig_thumb_{shortcode}_{uuid.uuid4().hex[:6]}.jpg")
+    return candidate if _save_media(url, candidate, timeout=30) else ""
+
+
+def _safe_slug(title: str, shortcode: str) -> str:
+    return re.sub(r"[^\w\-_. ]", "_", title)[:80] or shortcode
+
+
+def download_post(url: str) -> dict:
+    """Download every media item of a post — photo, carousel or reel.
+
+    Returns {success, kind, items: [{type, path}], title, thumbnail_path}.
+    """
+    post = parse_post(url)
+    if not post.get("success"):
+        return post
+
+    shortcode = post["shortcode"]
+    slug = _safe_slug(post["title"], shortcode)
+    items = []
+    for index, entry in enumerate(post["items"][:MAX_ALBUM_ITEMS], 1):
+        ext = "mp4" if entry["type"] == "video" else "jpg"
+        path = os.path.join(DOWNLOAD_DIR, f"ig_{shortcode}_{uuid.uuid4().hex[:6]}_{index}_{slug}.{ext}")
+        if _save_media(entry["url"], path):
+            items.append({"type": entry["type"], "path": path})
+
+    if not items:
+        return {"success": False, "error": "Не удалось скачать фото" if post["kind"] != "video"
+                else "Не удалось скачать видео"}
+
+    result = {
+        "success": True,
+        "kind": post["kind"],
+        "items": items,
+        "title": post["title"],
+        "caption": post.get("caption", ""),
+        "total_items": len(post["items"]),
+    }
+    if post["kind"] == "video":
+        result["path"] = items[0]["path"]
+        result["thumbnail_path"] = _save_thumbnail(post.get("thumbnail", ""), shortcode)
+    return result
+
+
+def download_video(url: str) -> dict:
+    """Video-only entry point kept for the audio/quality paths. {path, title, thumbnail_path}."""
+    post = download_post(url)
+    if not post.get("success"):
+        return post
+
+    video = next((item for item in post["items"] if item["type"] == "video"), None)
+    for item in post["items"]:
+        if item is not video:
+            try:
+                os.unlink(item["path"])
+            except OSError:
+                pass
+    if not video:
+        return {"success": False, "error": "В этом посте нет видео, только фото"}
+
+    return {
+        "success": True,
+        "path": video["path"],
+        "title": post["title"],
+        "thumbnail_path": post.get("thumbnail_path", ""),
+    }
 
 
 def download_thumbnail(url: str) -> dict:
-    """Fetch IG embed → save thumbnail."""
+    """Fetch IG embed → save the post image."""
     meta = fetch_metadata(url)
     if not meta["success"]:
         return meta
