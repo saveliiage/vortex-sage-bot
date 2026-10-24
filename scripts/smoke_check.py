@@ -146,6 +146,10 @@ def assert_instagram_posts_keep_their_shape() -> None:
     assert "download_post" in download, "the Instagram branch must use download_post"
     assert "_send_instagram_post(" in download, "photos and albums need their own send path"
     assert "send_media_group" in download, "carousels must go out as an album"
+    assert "_apify_items(" in instagram, "the Apify fallback must return photos, not just video"
+    assert "for attempt in range(2)" in instagram, (
+        "Instagram serves a shell page without post data now and then, the fetch must retry"
+    )
 
 
 def main() -> None:

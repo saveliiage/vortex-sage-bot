@@ -11,6 +11,7 @@ Strategy:
 import json
 import re
 import os
+import time
 import uuid
 import logging
 from urllib.parse import urlparse
@@ -143,7 +144,12 @@ def _post_caption(media: dict) -> str:
 
 
 def _embed_body(url: str) -> tuple[str, str, str, str]:
-    """(body, shortcode, kind, last_error) for an Instagram URL."""
+    """(body, shortcode, kind, last_error) for an Instagram URL.
+
+    Instagram intermittently answers with an app shell that carries no post data at all
+    (a ~490 KB page instead of the ~200 KB embed), so the request is retried a couple of
+    times before giving up — one bad page says nothing about the post itself.
+    """
     parsed = _parse_shortcode(url)
     if not parsed:
         return "", "", "", "Не похоже на Instagram URL"
@@ -152,16 +158,19 @@ def _embed_body(url: str) -> tuple[str, str, str, str]:
     embed_url = EMBED_TPL.format(kind=kind, shortcode=shortcode)
     body = ""
     last_err = ""
-    for ua in UAS:
-        try:
-            r = httpx.get(embed_url, headers={"User-Agent": ua}, timeout=30, follow_redirects=True)
-            r.raise_for_status()
-            body = r.text
-            if CTX_MARKER in body or VIDEO_RE.search(body):
-                break
-            last_err = f"UA={ua[:40]} len={len(body)} — нет данных поста"
-        except httpx.HTTPError as e:
-            last_err = f"UA={ua[:40]} — {e}"
+    for attempt in range(2):
+        for ua in UAS:
+            try:
+                r = httpx.get(embed_url, headers={"User-Agent": ua}, timeout=30, follow_redirects=True)
+                r.raise_for_status()
+                body = r.text
+                if CTX_MARKER in body or VIDEO_RE.search(body):
+                    return body, shortcode, kind, ""
+                last_err = f"UA={ua[:40]} len={len(body)} — нет данных поста"
+            except httpx.HTTPError as e:
+                last_err = f"UA={ua[:40]} — {e}"
+        if attempt < 1:
+            time.sleep(2)
     return body, shortcode, kind, last_err
 
 
@@ -230,9 +239,7 @@ def parse_post(url: str) -> dict:
 
     log.info("IG embed didn't yield post data, trying Apify fallback (%s)", last_err)
     apify = _apify_fallback(url)
-    if apify["success"]:
-        apify["kind"] = "video"
-        apify["items"] = [{"type": "video", "url": apify["video_url"]}]
+    if apify.get("success"):
         apify["shortcode"] = shortcode
         apify["webpage_url"] = f"https://www.instagram.com/{kind}/{shortcode}/"
         return apify
@@ -251,8 +258,35 @@ def fetch_metadata(url: str) -> dict:
     return meta
 
 
+def _apify_node(node: dict) -> dict | None:
+    """One media entry out of an Apify post or child record."""
+    if node.get("videoUrl"):
+        return {"type": "video", "url": node["videoUrl"]}
+    if node.get("displayUrl"):
+        return {"type": "photo", "url": node["displayUrl"]}
+    return None
+
+
+def _apify_items(item: dict) -> list:
+    """Every media of a post — children first, then the record itself, then the images list."""
+    items = []
+    for child in item.get("childPosts") or []:
+        entry = _apify_node(child)
+        if entry:
+            items.append(entry)
+    if not items:
+        entry = _apify_node(item)
+        if entry:
+            items.append(entry)
+    if not items:
+        for url in item.get("images") or []:
+            if url:
+                items.append({"type": "photo", "url": url})
+    return items
+
+
 def _apify_fallback(url: str) -> dict:
-    """Run apify/instagram-scraper for a single post. Returns same shape as fetch_metadata."""
+    """Run apify/instagram-scraper for a single post. Photos and carousels included."""
     if not APIFY_TOKEN:
         return {"success": False, "error": "APIFY_TOKEN не задан"}
 
@@ -275,19 +309,26 @@ def _apify_fallback(url: str) -> dict:
     if not data:
         return {"success": False, "error": "Apify пустой результат (приватный или удалён?)"}
     item = data[0]
-    video_url = item.get("videoUrl") or (item.get("videoVersions") or [{}])[0].get("url")
-    if not video_url:
-        return {"success": False, "error": f"Apify: нет videoUrl (type={item.get('type')})"}
+    items = _apify_items(item)
+    if not items:
+        return {"success": False, "error": f"Apify без медиа (type={item.get('type')})"}
 
-    title = (item.get("caption") or item.get("alt") or "").split("\n")[0][:100] or item.get("shortCode") or "Instagram post"
-    return {
+    caption = (item.get("caption") or item.get("alt") or "").strip()
+    title = caption.split("\n")[0][:100] or item.get("shortCode") or "Instagram post"
+    videos = [entry["url"] for entry in items if entry["type"] == "video"]
+    result = {
         "success": True,
+        "kind": "album" if len(items) > 1 else items[0]["type"],
+        "items": items,
         "title": title,
-        "video_url": video_url,
-        "thumbnail": item.get("displayUrl") or "",
+        "caption": caption,
+        "thumbnail": items[0]["url"],
         "platform": "Instagram",
         "duration": item.get("videoDuration") or 0,
     }
+    if videos:
+        result["video_url"] = videos[0]
+    return result
 
 
 def _save_media(url: str, path: str, timeout: int = 120) -> bool:
