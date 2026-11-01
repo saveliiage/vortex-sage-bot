@@ -150,6 +150,13 @@ def assert_instagram_posts_keep_their_shape() -> None:
     assert "for attempt in range(2)" in instagram, (
         "Instagram serves a shell page without post data now and then, the fetch must retry"
     )
+    assert "def story_target(" in instagram, "story links need their own recognizer"
+    assert "def download_story(" in instagram, "stories must have a download path"
+    assert "STORY_NEEDS_LOGIN" in instagram, (
+        "stories are login-only, a missing session must say so instead of failing generically"
+    )
+    assert "reels_media" in instagram, "stories come from the reels_media endpoint"
+    assert "download_story" in download, "the handler must route stories to download_story"
 
 
 def main() -> None:

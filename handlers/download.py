@@ -36,6 +36,14 @@ _ERROR_TEMPLATES = {
     "Не удалось скачать видео": "❌ Не удалось скачать видео с этой платформы.",
     "Не удалось скачать фото": "❌ Не удалось скачать фото с этой платформы.",
     "В этом посте нет видео, только фото": "🖼 Это пост с фото, звука там нет.",
+    "STORIES_NEED_LOGIN": (
+        "🔒 Сторис Instagram открываются только со входом. Нужен файл cookies на сервере, "
+        "без него сторис не скачиваются."
+    ),
+    "Этой сторис уже нет": "🕓 Эта сторис уже пропала, они живут 24 часа.",
+    "Активных сторис нет": "🕓 У этого аккаунта сейчас нет активных сторис.",
+    "Instagram не отдал профиль": "🔒 Instagram не пустил, cookies протухли. Нужен свежий файл cookies.",
+    "Не удалось скачать сторис": "❌ Не удалось скачать сторис. Попробуй ещё раз.",
     "Не удалось скачать аудио": "❌ Не удалось извлечь аудио.",
 }
 
@@ -209,26 +217,29 @@ async def handle_download_video(update: Update, context: ContextTypes.DEFAULT_TY
     from core.downloader import _platform
     plat = _platform(url)
 
-    # Instagram — one call covers reel, single photo and carousel
+    # Instagram — one call covers reel, single photo, carousel and stories
     if plat == "instagram":
         from core import instagram
-        await _edit(status, "⬇️ Скачиваю...")
-        result = await asyncio.to_thread(instagram.download_post, url)
+        is_story = bool(instagram.story_target(url))
+        await _edit(status, "⬇️ Скачиваю сторис..." if is_story else "⬇️ Скачиваю...")
+        fetcher = instagram.download_story if is_story else instagram.download_post
+        result = await asyncio.to_thread(fetcher, url)
         if not result["success"]:
             await _edit(status, humanize_error(result.get("error", "")))
             return
         total = sum(os.path.getsize(item["path"]) for item in result["items"])
         if total > TELEGRAM_FILE_SIZE:
             _cleanup_media([item["path"] for item in result["items"]])
-            await _edit(status, f"⚠️ Пост слишком большой ({total // 1024 // 1024} MB).")
+            await _edit(status, f"⚠️ Файл слишком большой ({total // 1024 // 1024} MB).")
             return
         await _edit(status, "📤 Отправляю...")
         await _send_instagram_post(update, result, url)
         total_items = result.get("total_items") or len(result["items"])
         if total_items > len(result["items"]):
+            what = "сторис" if is_story else "посте"
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"ℹ️ В посте {total_items} файлов, отправил первые {len(result['items'])} (лимит альбома в Telegram).",
+                text=f"ℹ️ В {what} {total_items} файлов, отправил первые {len(result['items'])} (лимит альбома в Telegram).",
             )
         return
 

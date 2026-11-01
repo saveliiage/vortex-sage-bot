@@ -17,7 +17,7 @@ import logging
 from urllib.parse import urlparse
 import httpx
 
-from config import DOWNLOAD_DIR, APIFY_TOKEN
+from config import DOWNLOAD_DIR, APIFY_TOKEN, IG_COOKIES_FILE
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +35,16 @@ CAPTION_RE = re.compile(r'\\\\"caption\\\\":\\\\"((?:[^"\\\\]|\\\\.)*?)\\\\"')
 CTX_MARKER = '"contextJSON":"'
 FULL_SIZE_WIDTH = 1000  # display_resources below this are downscaled copies
 MAX_ALBUM_ITEMS = 10  # Telegram media group limit
+
+# ── Stories ───────────────────────────────────────────────────────────────────────────────
+# A story link cannot be fetched anonymously: Instagram answers a logged-out visitor with a
+# signup wall and no media at all. The web API below therefore needs the user's own cookie
+# jar, and the code says so out loud instead of failing with a generic error.
+IG_APP_ID = "936619743392459"  # the id the Instagram web app itself sends
+STORY_RE = re.compile(
+    r"instagram\.com/stories/(?:(highlights)/(\d+)|([A-Za-z0-9._]+)(?:/(\d+))?)", re.I
+)
+STORY_NEEDS_LOGIN = "STORIES_NEED_LOGIN"
 
 
 def _unescape(raw: str) -> str:
@@ -331,6 +341,144 @@ def _apify_fallback(url: str) -> dict:
     return result
 
 
+def story_target(url: str) -> tuple[str, str, str] | None:
+    """(handle, story_id, highlight_id) for a story URL, None when it is not one."""
+    if "instagram.com" not in (url or "").lower():
+        return None
+    match = STORY_RE.search(url)
+    if not match:
+        return None
+    highlight_id = match.group(2) or ""
+    handle = match.group(3) or ""
+    story_id = match.group(4) or ""
+    if not handle and not highlight_id:
+        return None
+    return handle, story_id, highlight_id
+
+
+def _ig_jar() -> dict:
+    """Netscape cookie file -> plain cookie dict. Values are never logged."""
+    path = IG_COOKIES_FILE if (IG_COOKIES_FILE and os.path.exists(IG_COOKIES_FILE)) else ""
+    if not path:
+        return {}
+    jar = {}
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                raw = line.strip()
+                if not raw:
+                    continue
+                if raw.startswith("#HttpOnly_"):
+                    raw = raw[len("#HttpOnly_"):]
+                elif raw.startswith("#"):
+                    continue
+                parts = raw.split("\t")
+                if len(parts) < 7 or "instagram" not in parts[0]:
+                    continue
+                jar[parts[5]] = parts[6]
+    except OSError as e:
+        log.warning("IG cookie jar unreadable: %s", e)
+    return jar
+
+
+def _story_client(jar: dict) -> httpx.Client:
+    """Client that looks like the Instagram web app, carrying the user's session."""
+    return httpx.Client(
+        headers={
+            "User-Agent": MOBILE_UA,
+            "x-ig-app-id": IG_APP_ID,
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.instagram.com/",
+        },
+        cookies=jar,
+        timeout=40,
+        follow_redirects=True,
+    )
+
+
+def _story_buckets(data: dict) -> list:
+    """Media items out of a reels_media answer, both response shapes Instagram uses."""
+    buckets = []
+    reels = data.get("reels") or {}
+    if isinstance(reels, dict):
+        buckets.extend(value for value in reels.values() if isinstance(value, dict))
+    reels_media = data.get("reels_media") or []
+    if isinstance(reels_media, list):
+        buckets.extend(value for value in reels_media if isinstance(value, dict))
+    items = []
+    for bucket in buckets:
+        items.extend(bucket.get("items") or [])
+    return items
+
+
+def _story_entry(item: dict) -> dict | None:
+    """One story item -> {type, url, id, thumb} with the biggest media available."""
+    best_image = ""
+    candidates = ((item.get("image_versions2") or {}).get("candidates") or [])
+    if candidates:
+        best_image = max(candidates, key=lambda c: (c.get("width") or 0) * (c.get("height") or 0)).get("url") or ""
+
+    versions = item.get("video_versions") or []
+    if versions:
+        best = max(versions, key=lambda v: (v.get("width") or 0) * (v.get("height") or 0))
+        if best.get("url"):
+            return {"type": "video", "url": best["url"], "id": str(item.get("pk") or ""), "thumb": best_image}
+    if best_image:
+        return {"type": "photo", "url": best_image, "id": str(item.get("pk") or ""), "thumb": ""}
+    return None
+
+
+def _story_user_pk(client: httpx.Client, handle: str) -> str:
+    """Numeric profile id for a handle, needed by reels_media."""
+    try:
+        r = client.get("https://www.instagram.com/api/v1/users/web_profile_info/",
+                       params={"username": handle})
+        r.raise_for_status()
+        user = ((r.json().get("data") or {}).get("user") or {})
+        return str(user.get("id") or "")
+    except (httpx.HTTPError, ValueError) as e:
+        log.warning("IG profile lookup failed for %s: %s", handle, e)
+        return ""
+
+
+def _story_media(handle: str, story_id: str, highlight_id: str) -> dict:
+    """Active stories of a handle, or every item of a highlight. Needs the cookie jar."""
+    jar = _ig_jar()
+    if not jar.get("sessionid"):
+        return {"success": False, "error": STORY_NEEDS_LOGIN}
+
+    with _story_client(jar) as client:
+        key = highlight_id or _story_user_pk(client, handle)
+        if not key:
+            return {"success": False, "error": "Instagram не отдал профиль, cookies протухли"}
+        try:
+            r = client.get("https://www.instagram.com/api/v1/feed/reels_media/",
+                           params={"reels_media": f"[{key}]"})
+            r.raise_for_status()
+            items = _story_buckets(r.json())
+        except (httpx.HTTPError, ValueError) as e:
+            return {"success": False, "error": f"Instagram не отдал сторис: {e}"}
+
+    entries = [entry for entry in (_story_entry(item) for item in items) if entry]
+    if not entries:
+        return {"success": False, "error": "Активных сторис нет"}
+
+    if story_id:
+        picked = [entry for entry in entries if entry["id"] == story_id]
+        if not picked:
+            return {"success": False, "error": "Этой сторис уже нет, она пропала или закрыта"}
+        entries = picked
+
+    return {
+        "success": True,
+        "kind": "album" if len(entries) > 1 else entries[0]["type"],
+        "items": entries,
+        "title": f"Сторис {handle or 'Instagram'}",
+        "handle": handle,
+    }
+
+
 def _save_media(url: str, path: str, timeout: int = 120) -> bool:
     """Stream one media URL to disk. Removes the partial file when the transfer fails."""
     try:
@@ -396,6 +544,50 @@ def download_post(url: str) -> dict:
     if post["kind"] == "video":
         result["path"] = items[0]["path"]
         result["thumbnail_path"] = _save_thumbnail(post.get("thumbnail", ""), shortcode)
+    return result
+
+
+def parse_story(url: str) -> dict:
+    """Metadata for a story link — one item or a whole highlight, photo or video."""
+    target = story_target(url)
+    if not target:
+        return {"success": False, "error": "Не похоже на ссылку сторис Instagram"}
+    handle, story_id, highlight_id = target
+    post = _story_media(handle, story_id, highlight_id)
+    if not post.get("success"):
+        return post
+    post["shortcode"] = story_id or highlight_id
+    post["webpage_url"] = f"https://www.instagram.com/stories/{handle}/"
+    return post
+
+
+def download_story(url: str) -> dict:
+    """Download the media behind a story link. {success, kind, items: [{type, path}], title}."""
+    post = parse_story(url)
+    if not post.get("success"):
+        return post
+
+    stem = re.sub(r"[^\w.\-]", "_", post.get("handle") or "story")[:40] or "story"
+    items = []
+    for index, entry in enumerate(post["items"][:MAX_ALBUM_ITEMS], 1):
+        ext = "mp4" if entry["type"] == "video" else "jpg"
+        path = os.path.join(DOWNLOAD_DIR, f"igstory_{stem}_{uuid.uuid4().hex[:6]}_{index}.{ext}")
+        if _save_media(entry["url"], path):
+            items.append({"type": entry["type"], "path": path})
+
+    if not items:
+        return {"success": False, "error": "Не удалось скачать сторис"}
+
+    result = {
+        "success": True,
+        "kind": post["kind"],
+        "items": items,
+        "title": post["title"],
+        "total_items": len(post["items"]),
+    }
+    if post["kind"] == "video":
+        result["path"] = items[0]["path"]
+        result["thumbnail_path"] = _save_thumbnail(post["items"][0].get("thumb", ""), stem)
     return result
 
 

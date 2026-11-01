@@ -20,6 +20,7 @@ Telegram-бот для скачивания, анализа и конверта�
 |-----------|-------|-------|-------|
 | YouTube | ✅ | ✅ | yt-dlp + cookies |
 | Instagram | ✅ | ✅ | Embed API → Apify fallback |
+| Instagram истории | ✅ | ➖ | reels_media + cookies (нужен вход) |
 | TikTok | ✅ | ✅ | yt-dlp (Apify fallback) |
 | Twitter/X | ✅ | ✅ | yt-dlp |
 | Vimeo, Dailymotion, др. | ✅ | ✅ | yt-dlp |
@@ -105,6 +106,26 @@ python bot.py
 
 Обновление куков требует Chromium, залогиненный в YouTube, с CDP на 127.0.0.1:9222.
 Юниты для этого описаны в `deploy/README.md`, сам скрипт `refresh_cookies.py` рядом с проектом.
+
+## Instagram истории
+
+Истории Instagram без входа не отдаются вообще. Анонимного посетителя Instagram встречает
+стеной регистрации, в HTML нет ни одного адреса на медиа, поэтому ни embed, ни yt-dlp, ни
+Apify без сессии сторис не достают.
+
+Нужен файл `cookies/instagram.txt` (Netscape, путь из `IG_COOKIES_FILE`, по умолчанию
+`/app/cookies/instagram.txt`) с куками залогиненного аккаунта, главное там `sessionid`.
+Как получить: открыть instagram.com в браузере, где ты залогинен, экспортировать куки
+расширением (Get cookies.txt LOCALLY или Cookie-Editor, формат Netscape), сохранить файл
+на сервер в `cookies/instagram.txt`. Дальше бот сам:
+
+1. Берёт числовой id профиля из `web_profile_info`.
+2. Зовёт `feed/reels_media` и получает все активные сторис, фото и видео, в максимальном размере.
+3. Присылает их: одна сторис как фото или видео, несколько как альбом.
+
+Ссылка вида `/stories/<ник>/<id>` даёт ровно ту сторис, которую расшарили, `/stories/<ник>/`
+даёт все активные, `/stories/highlights/<id>/` даёт весь хайлайт. Если сторис уже истекла
+(живут 24 часа), бот так и пишет. Файла куков нет — бот честно отвечает, что нужен вход.
 
 ## Структура проекта
 

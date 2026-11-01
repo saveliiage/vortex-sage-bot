@@ -64,9 +64,19 @@ YT_DLP_BIN = shutil.which("yt-dlp") or os.getenv("YT_DLP_BIN", "/opt/vortex/venv
 YT_COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "")
 
 
+# Instagram cookies — Netscape format, same as YouTube. Stories (and some posts) only open
+# for a logged-in session, so this jar is used first for instagram links, not last.
+IG_COOKIES_FILE = os.getenv("IG_COOKIES_FILE", "/app/cookies/instagram.txt")
+
+
 def _existing_cookies_file() -> str:
     """Cookie jar path, empty when the configured file is missing."""
     return YT_COOKIES_FILE if (YT_COOKIES_FILE and os.path.exists(YT_COOKIES_FILE)) else ""
+
+
+def _existing_ig_cookies_file() -> str:
+    """Instagram cookie jar path, empty when the file is missing."""
+    return IG_COOKIES_FILE if (IG_COOKIES_FILE and os.path.exists(IG_COOKIES_FILE)) else ""
 
 
 # Two cookie profiles for yt-dlp, consumed by core.ytdlp: downloads go out anonymously first

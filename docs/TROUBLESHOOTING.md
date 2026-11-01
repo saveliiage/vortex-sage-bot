@@ -330,6 +330,25 @@
 
 3. Если токен есть но не работает — возможно закончился лимит на Apify. Проверь в консоли Apify остаток.
 
+## 10. Instagram истории не скачиваются
+
+Сторис закрыты для всех, кто не залогинен. Признаки и что делать:
+
+- Бот пишет «Сторис Instagram открываются только со входом» — нет файла `cookies/instagram.txt`
+  или в нём нет `sessionid`. Экспортируй куки залогиненного аккаунта в Netscape-формате и
+  положи в `~/vortex-sage-bot/cookies/instagram.txt`, затем `docker compose restart bot`.
+- Бот пишет «Instagram не пустил, cookies протухли» — Instagram выкинул сессию, экспортируй куки заново.
+- Бот пишет «Эта сторис уже пропала» — истории живут 24 часа, ссылка старая.
+- Проверить руками из контейнера:
+
+```bash
+docker exec vortex-bot sh -c 'cd /app && PYTHONPATH=/app python -c "
+from core import instagram
+print(instagram.parse_story(\"https://www.instagram.com/stories/<ник>/\"))"'
+```
+
+Протухшие куки YouTube и Instagram лежат отдельно, одно не ломает другое.
+
 ## Если ничего не помогло
 
 1. Сделай бэкап БД (проблема решаема — данные сохранятся):
