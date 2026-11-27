@@ -58,14 +58,52 @@ def _unescape(raw: str) -> str:
     return s
 
 
+IG_HOSTS = ("instagram.com", "instagr.am", "ig.me")
+_POST_KINDS = ("p", "reel", "reels", "tv")
+# path words that sit right after a kind marker but are pages, not posts
+_NOT_CODES = {"audio", "share", "explore", "stories", "highlights", "accounts", "direct"}
+
+
 def _parse_shortcode(url: str) -> tuple[str, str] | None:
-    """Extract (kind, shortcode) from an Instagram URL. kind ∈ {p, reel, tv}."""
-    path = urlparse(url).path.strip("/")
-    parts = path.split("/")
-    if len(parts) >= 2 and parts[0] in ("p", "reel", "tv", "reels"):
-        kind = "reel" if parts[0] in ("reel", "reels") else parts[0]
-        return kind, parts[1]
+    """Extract (kind, shortcode) from an Instagram URL. kind ∈ {p, reel, tv}.
+
+    Instagram hands out several shapes of the same link — `/p/<code>/`, `/reel/<code>/`,
+    `/reels/<code>/`, `/<handle>/reel/<code>/` and the share form `/share/reel/<token>/` —
+    so the kind marker is looked for anywhere in the path instead of only at its start.
+    """
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    host = (parsed.netloc or "").lower().split("@")[-1].split(":")[0]
+    if not any(host == h or host.endswith("." + h) for h in IG_HOSTS):
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    for index, part in enumerate(parts):
+        if part in _POST_KINDS and index + 1 < len(parts):
+            code = parts[index + 1].strip()
+            if not code or code in _POST_KINDS or code.lower() in _NOT_CODES:
+                continue
+            return ("reel" if part == "reels" else part), code
     return None
+
+
+def _looks_shared(url: str) -> bool:
+    """True for the app share links, /share/reel/<token>/ and /share/p/<token>/."""
+    return "share" in [part for part in urlparse(url).path.split("/") if part]
+
+
+def _resolve_share(url: str) -> str:
+    """Follow a /share/... link to the canonical post URL. Empty string when it fails."""
+    try:
+        r = httpx.get(url, headers={"User-Agent": MOBILE_UA}, timeout=30, follow_redirects=True)
+    except httpx.HTTPError as e:
+        log.warning("IG share link did not resolve: %s", e)
+        return ""
+    final = str(r.url)
+    if not _looks_shared(final):
+        return final
+    match = re.search(r'<link[^>]+rel="canonical"[^>]+href="([^"]+)"', r.text) or re.search(
+        r'<meta[^>]+property="og:url"[^>]+content="([^"]+)"', r.text
+    )
+    return match.group(1) if match else ""
 
 
 def _slice_json_string(body: str, start: int) -> str | None:
@@ -160,9 +198,18 @@ def _embed_body(url: str) -> tuple[str, str, str, str]:
     (a ~490 KB page instead of the ~200 KB embed), so the request is retried a couple of
     times before giving up — one bad page says nothing about the post itself.
     """
+    if _looks_shared(url):
+        resolved = _resolve_share(url)
+        if resolved:
+            log.info("IG share link resolved to %s", resolved[:160])
+            url = resolved
+        else:
+            log.info("IG share link not resolved, trying it as is: %s", url[:160])
+
     parsed = _parse_shortcode(url)
     if not parsed:
-        return "", "", "", "Не похоже на Instagram URL"
+        log.info("IG link not recognized: %s", url[:160])
+        return "", "", "", "Не похоже на ссылку Instagram"
     kind, shortcode = parsed
 
     embed_url = EMBED_TPL.format(kind=kind, shortcode=shortcode)
